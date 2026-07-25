@@ -350,8 +350,54 @@ function saveImagesLocal() {
 }
 function saveImages() { saveImagesLocal(); scheduleCloudSave(); }
 // WebPはPNGの約1/11で軽い（iOS14+/主要ブラウザ対応）。読込高速化のため採用
-function cardThumb(c) { return c.image ? c.image + '/low.webp' : (customImg[c.id] || null); }
-function cardFull(c)  { return c.image ? c.image + '/high.webp' : (customImg[c.id] || null); }
+// 共有画像マスタ（全ユーザー共通。card_idごとに1枚。Supabaseのcard_imagesテーブル）
+const MASTER_KEY = 'pokecard_masterimg';
+let masterImg = {}; try { masterImg = JSON.parse(localStorage.getItem(MASTER_KEY)) || {}; } catch {}
+function saveMasterCache() { try { localStorage.setItem(MASTER_KEY, JSON.stringify(masterImg)); } catch {} }
+// 表示優先: TCGdex画像 > 共有マスタ > 個人ローカル
+function cardThumb(c) { return c.image ? c.image + '/low.webp' : (masterImg[c.id] || customImg[c.id] || null); }
+function cardFull(c)  { return c.image ? c.image + '/high.webp' : (masterImg[c.id] || customImg[c.id] || null); }
+function anyCustomImg(id) { return masterImg[id] || customImg[id] || ''; }
+
+async function fetchMasterImages() {
+  if (!cloudConfigured()) return;
+  try {
+    const r = await fetch(`${SUPABASE_URL}/rest/v1/card_images?select=card_id,url`, { headers: { apikey: SUPABASE_ANON } });
+    if (!r.ok) return;
+    const rows = await r.json();
+    const m = {}; rows.forEach(x => { m[x.card_id] = x.url; });
+    masterImg = m; saveMasterCache();
+    if (window._redrawSet) window._redrawSet();
+  } catch {}
+}
+async function cloudPushImage(id, url, retry) {
+  const r = await fetch(`${SUPABASE_URL}/rest/v1/card_images?on_conflict=card_id`, {
+    method: 'POST',
+    headers: authHeaders({ 'Content-Type': 'application/json', Prefer: 'resolution=merge-duplicates,return=minimal' }),
+    body: JSON.stringify([{ card_id: id, url, updated_at: nowISO() }])
+  });
+  if (r.status === 401 && !retry) { await refreshSession(); return cloudPushImage(id, url, true); }
+  if (!r.ok) throw new Error('画像共有 ' + r.status);
+}
+async function cloudDeleteImage(id, retry) {
+  const r = await fetch(`${SUPABASE_URL}/rest/v1/card_images?card_id=eq.${encodeURIComponent(id)}`, { method: 'DELETE', headers: authHeaders() });
+  if (r.status === 401 && !retry) { await refreshSession(); return cloudDeleteImage(id, true); }
+}
+async function registerImage(id, url) {
+  if (loggedIn()) {
+    await cloudPushImage(id, url);        // 共有マスタへ（全員に反映）
+    masterImg[id] = url; saveMasterCache();
+    toast('画像を登録しました（全員に共有）');
+  } else {
+    customImg[id] = url; saveImages();     // 未ログインはこの端末のみ
+    toast('画像を登録しました（この端末のみ・ログインで共有）');
+  }
+}
+async function removeImage(id) {
+  if (loggedIn() && masterImg[id]) { try { await cloudDeleteImage(id); } catch {} delete masterImg[id]; saveMasterCache(); }
+  if (customImg[id]) { delete customImg[id]; saveImages(); }
+  toast('画像を削除しました');
+}
 
 // ---- pending（未保存の選択。保存済みと状態が異なるカードIDの集合） ----
 let pending = new Set();
@@ -620,22 +666,23 @@ async function openCard(id) {
     const c = await r.json();
     const willOwn = displayOwned(id);
     const full = cardFull(c);
-    const hasCustom = !c.image && !!customImg[id];
+    const existing = anyCustomImg(id);
+    const hasCustom = !c.image && !!existing;
     const imgHtml = full
       ? `<img src="${full}" alt="" onerror="this.style.display='none'">`
       : `<div class="noimg" style="height:180px;border-radius:10px;margin-bottom:14px">画像なし</div>`;
     // TCGdexに画像が無いカードだけ、手動登録UIを出す
     const regHtml = c.image ? '' : `
       <div class="imgreg">
-        <div class="imgreg-title">画像を手動登録${hasCustom?'（登録済み）':''}</div>
-        <input id="imgUrl" class="imgreg-input" placeholder="画像URLを貼り付け（公式サイトの画像URL等）" value="${hasCustom&&/^https?:/.test(customImg[id])?esc(customImg[id]):''}">
+        <div class="imgreg-title">画像を登録（全員で共有）${hasCustom?'・登録済み':''}</div>
+        <input id="imgUrl" class="imgreg-input" placeholder="画像URLを貼り付け（公式サイトの画像URL等）" value="${hasCustom&&/^https?:/.test(existing)?esc(existing):''}">
         <div class="imgreg-btns">
           <button class="btn primary" id="imgSave">URLを登録</button>
           <button class="btn" id="imgFileBtn">ファイルから</button>
           ${hasCustom?'<button class="btn" id="imgDel">削除</button>':''}
         </div>
         <input type="file" id="imgFile" accept="image/*" style="display:none">
-        <div class="imgreg-hint">公式カード画像のURLをコピペするか、保存済み画像を選択できます。この端末に保存され、書出データにも含まれます。</div>
+        <div class="imgreg-hint">${loggedIn()?'登録するとログイン利用者みんなに共有されます。':'ログインすると全員に共有できます（今はこの端末のみ保存）。'}公式カード画像のURL貼付けがおすすめ。</div>
       </div>`;
     body.innerHTML = `
       ${imgHtml}
@@ -650,21 +697,21 @@ async function openCard(id) {
     };
     if (!c.image) {
       const refresh = () => { closeModal(); if (window._redrawSet) window._redrawSet(); };
-      document.getElementById('imgSave').onclick = () => {
+      document.getElementById('imgSave').onclick = async () => {
         const u = document.getElementById('imgUrl').value.trim();
         if (!u) { alert('画像URLを入力してください。'); return; }
-        customImg[id] = u; saveImages(); toast('画像を登録しました'); refresh();
+        try { await registerImage(id, u); refresh(); } catch (e) { alert('登録に失敗しました：' + e.message); }
       };
       document.getElementById('imgFileBtn').onclick = () => document.getElementById('imgFile').click();
       document.getElementById('imgFile').onchange = ev => {
         const f = ev.target.files[0]; if (!f) return;
-        if (f.size > 1.5 * 1024 * 1024) { if (!confirm('画像が大きめです（保存容量を圧迫する場合があります）。続けますか？')) return; }
+        if (f.size > 1.5 * 1024 * 1024) { if (!confirm('画像が大きめです（共有データを圧迫する場合があります）。URL登録がおすすめです。続けますか？')) return; }
         const rd = new FileReader();
-        rd.onload = () => { customImg[id] = rd.result; saveImages(); toast('画像を登録しました'); refresh(); };
+        rd.onload = async () => { try { await registerImage(id, rd.result); refresh(); } catch (e) { alert('登録に失敗しました：' + e.message); } };
         rd.readAsDataURL(f);
       };
       const del = document.getElementById('imgDel');
-      if (del) del.onclick = () => { delete customImg[id]; saveImages(); toast('画像を削除しました'); refresh(); };
+      if (del) del.onclick = async () => { await removeImage(id); refresh(); };
     }
   } catch (e) {
     body.innerHTML = `<div class="empty">詳細を取得できませんでした。</div>`;
@@ -728,6 +775,7 @@ async function authFlow(isSignup, emailArg, pwArg) {
     }
     setCloudStatus('☁ 同期済み');
     try { localStorage.removeItem('pokecard_localonly'); } catch {}
+    fetchMasterImages(); // 共有画像マスタを最新化
     hideLoginScreen();
     closeData(); toast(isSignup ? '登録してログインしました' : 'ログインしました'); rerender();
   } catch (e) {
@@ -934,6 +982,7 @@ refreshTotal();
 setCloudStatus();
 if (location.hash && location.hash.length > 1) goSet(location.hash.slice(1));
 else goSets();
+fetchMasterImages(); // 共有画像マスタを取得（未ログインでも表示に反映）
 if (loggedIn()) {
   cloudInitialSync(); // ログイン済みなら起動時にクラウドから取得
 } else if (cloudConfigured() && localStorage.getItem('pokecard_localonly') !== '1') {
