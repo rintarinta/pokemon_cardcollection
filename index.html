@@ -717,11 +717,12 @@ function renderSet(set) {
       let cls = dOwned ? 'owned' : 'unowned';
       if (isPend) cls += isRm ? ' pending rm' : ' pending';
       const src = cardThumb(c);
-      // 画像404時は img だけを差し替える（outerHTML）。parentNodeを消すとⓘボタン等まで消えるため
-      const noimgHtml = `<div class=\\'noimg\\'><b style=\\'font-size:13px;color:#cbd5e1\\'>No.${c.localId}</b><br>${esc(c.name)}<br><small style=\\'color:#60a5fa\\'>ⓘで画像追加</small></div>`;
+      // 画像なしでも画像ありと同じレイアウト（番号=左上バッジ / 名前=下 / ⓘ=右下）。中央はヒントのみ
+      // 404時は img だけを差し替える（outerHTML）。parentNodeを消すとⓘボタン等まで消えるため
+      const noimgHtml = `<div class=\\'noimg\\'><small style=\\'color:#60a5fa\\'>ⓘで画像追加</small></div>`;
       const img = src
         ? `<img src="${src}" alt="${esc(c.name)}" loading="lazy" decoding="async" onerror="this.outerHTML='${noimgHtml}'">`
-        : `<div class="noimg"><b style="font-size:13px;color:#cbd5e1">No.${c.localId}</b><br>${esc(c.name)}<br><small style="color:#60a5fa">ⓘで画像追加</small></div>`;
+        : `<div class="noimg"><small style="color:#60a5fa">ⓘで画像追加</small></div>`;
       return `<div class="poke ${cls}" data-id="${c.id}">
         ${img}
         <div class="num">${c.localId}</div>
