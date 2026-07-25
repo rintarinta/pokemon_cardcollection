@@ -195,7 +195,7 @@
   <div class="brand" onclick="goSets()"><span class="dot"></span>ポケカ コレクション</div>
   <div class="grow"></div>
   <div class="stat">所有 <b id="totalOwned">0</b> 枚</div>
-  <div class="stat" id="syncStatus" style="color:var(--good)"></div>
+  <div class="stat" id="syncStatus" style="color:var(--good);cursor:pointer" onclick="openData()" title="アカウント・データ管理"></div>
   <input type="file" id="importFileJson" accept="application/json,.json" style="display:none">
   <input type="file" id="importFileCsv" accept=".csv,text/csv" style="display:none">
   <button class="btn" onclick="openData()">データ管理</button>
@@ -215,6 +215,11 @@
 
 <div class="modal-bg" id="modalBg" onclick="if(event.target===this)closeModal()">
   <div class="modal" id="modalBody"></div>
+</div>
+
+<!-- カード追加モーダル -->
+<div class="modal-bg" id="addCardBg" onclick="if(event.target===this)closeAddCard()">
+  <div class="modal" style="text-align:left;max-width:420px" id="addCardBody"></div>
 </div>
 
 <!-- データ管理モーダル -->
@@ -354,10 +359,67 @@ function saveImages() { saveImagesLocal(); scheduleCloudSave(); }
 const MASTER_KEY = 'pokecard_masterimg';
 let masterImg = {}; try { masterImg = JSON.parse(localStorage.getItem(MASTER_KEY)) || {}; } catch {}
 function saveMasterCache() { try { localStorage.setItem(MASTER_KEY, JSON.stringify(masterImg)); } catch {} }
-// 表示優先: TCGdex画像 > 共有マスタ > 個人ローカル
-function cardThumb(c) { return c.image ? c.image + '/low.webp' : (masterImg[c.id] || customImg[c.id] || null); }
-function cardFull(c)  { return c.image ? c.image + '/high.webp' : (masterImg[c.id] || customImg[c.id] || null); }
+// セット画像URLパターン（set_idごとに1つ。{n}=3桁番号。全カードに自動適用・共有マスタ）
+const setImgPattern = {}; // setId -> "https://.../s/{n}.png"
+function setIdOf(c) { const i = c.id.lastIndexOf('-'); return i > 0 ? c.id.slice(0, i) : ''; }
+function genUrl(c) { const t = setImgPattern[setIdOf(c)]; return t ? t.replace('{n}', pad3(c.localId)) : null; }
+// 表示優先: TCGdex画像 > 個別共有(card_images) > セットパターン > 個人ローカル
+function cardThumb(c) { return c.image ? c.image + '/low.webp' : (masterImg[c.id] || genUrl(c) || customImg[c.id] || null); }
+function cardFull(c)  { return c.image ? c.image + '/high.webp' : (masterImg[c.id] || genUrl(c) || customImg[c.id] || null); }
 function anyCustomImg(id) { return masterImg[id] || customImg[id] || ''; }
+
+async function fetchSetPatterns() {
+  if (!cloudConfigured()) return;
+  try {
+    const r = await fetch(`${SUPABASE_URL}/rest/v1/set_images?select=set_id,url_template`, { headers: { apikey: SUPABASE_ANON } });
+    if (!r.ok) return;
+    (await r.json()).forEach(x => { setImgPattern[x.set_id] = x.url_template; });
+    if (window._redrawSet) window._redrawSet();
+  } catch {}
+}
+function deriveTemplate(url) {
+  const re = /(\d+)(\.[a-zA-Z0-9]+)(\?.*)?$/;
+  if (!re.test(url)) return null;
+  return url.replace(re, '{n}$2$3');
+}
+async function cloudPushSetPattern(setId, template, retry) {
+  const r = await fetch(`${SUPABASE_URL}/rest/v1/set_images?on_conflict=set_id`, {
+    method: 'POST',
+    headers: authHeaders({ 'Content-Type': 'application/json', Prefer: 'resolution=merge-duplicates,return=minimal' }),
+    body: JSON.stringify([{ set_id: setId, url_template: template, updated_at: nowISO() }])
+  });
+  if (r.status === 401 && !retry) { await refreshSession(); return cloudPushSetPattern(setId, template, true); }
+  if (!r.ok) throw new Error('パターン保存 ' + r.status);
+}
+async function cloudDeleteSetPattern(setId, retry) {
+  const r = await fetch(`${SUPABASE_URL}/rest/v1/set_images?set_id=eq.${encodeURIComponent(setId)}`, { method: 'DELETE', headers: authHeaders() });
+  if (r.status === 401 && !retry) { await refreshSession(); return cloudDeleteSetPattern(setId, true); }
+}
+async function setPatternPrompt(setId) {
+  if (!loggedIn()) { alert('画像の一括設定はログインが必要です。'); return; }
+  const cur = setImgPattern[setId];
+  const sample = prompt(
+    'このセットのカード画像URLを1枚貼ってください。\n番号部分（例: 001）を自動で差し替え、セット全カードに一括適用します。\n\n例: https://www.pokemon-card.com/ex/m1/assets/images/card/s/001.png\n\n' + (cur ? '（設定を解除するには「clear」と入力）\n現在: ' + cur : ''),
+    cur ? '' : ''
+  );
+  if (sample === null) return;
+  const s = sample.trim();
+  if (s.toLowerCase() === 'clear') {
+    try { await cloudDeleteSetPattern(setId); } catch {}
+    delete setImgPattern[setId];
+    toast('画像パターンを解除しました');
+    if (setDetailCache[setId]) renderSet(setDetailCache[setId]);
+    return;
+  }
+  const t = deriveTemplate(s);
+  if (!t || t.indexOf('{n}') < 0) { alert('番号を含む画像URLを貼ってください（例: .../001.png）。'); return; }
+  try {
+    await cloudPushSetPattern(setId, t);
+    setImgPattern[setId] = t;
+    toast('このセットの画像を一括設定しました（全員に共有）');
+    if (setDetailCache[setId]) renderSet(setDetailCache[setId]);
+  } catch (e) { alert('設定に失敗しました：' + e.message); }
+}
 
 async function fetchMasterImages() {
   if (!cloudConfigured()) return;
@@ -397,6 +459,43 @@ async function removeImage(id) {
   if (loggedIn() && masterImg[id]) { try { await cloudDeleteImage(id); } catch {} delete masterImg[id]; saveMasterCache(); }
   if (customImg[id]) { delete customImg[id]; saveImages(); }
   toast('画像を削除しました');
+}
+
+// ===== 手動カード登録（TCGdexに無いカードを共有マスタで補完。custom_cardsテーブル） =====
+const customCardsBySet = {}; // setId -> [{id,localId,name,image:null,custom:true}]
+function pad3(n) { const s = String(n).replace(/[^0-9]/g, ''); return s ? s.padStart(3, '0') : String(n); }
+async function loadCustomCards(setId) {
+  if (!cloudConfigured()) { customCardsBySet[setId] = customCardsBySet[setId] || []; return; }
+  try {
+    const r = await fetch(`${SUPABASE_URL}/rest/v1/custom_cards?set_id=eq.${encodeURIComponent(setId)}&select=card_id,local_id,name,image_url`, { headers: { apikey: SUPABASE_ANON } });
+    if (!r.ok) { customCardsBySet[setId] = customCardsBySet[setId] || []; return; }
+    const rows = await r.json();
+    customCardsBySet[setId] = rows.map(x => {
+      if (x.image_url) masterImg[x.card_id] = x.image_url;
+      return { id: x.card_id, localId: x.local_id || '', name: x.name || '(無名)', image: null, custom: true };
+    });
+    saveMasterCache();
+  } catch { customCardsBySet[setId] = customCardsBySet[setId] || []; }
+}
+async function cloudPushCards(rows, retry) {
+  const r = await fetch(`${SUPABASE_URL}/rest/v1/custom_cards?on_conflict=card_id`, {
+    method: 'POST',
+    headers: authHeaders({ 'Content-Type': 'application/json', Prefer: 'resolution=merge-duplicates,return=minimal' }),
+    body: JSON.stringify(rows)
+  });
+  if (r.status === 401 && !retry) { await refreshSession(); return cloudPushCards(rows, true); }
+  if (!r.ok) throw new Error('カード登録 ' + r.status);
+}
+async function cloudDeleteCard(id, retry) {
+  const r = await fetch(`${SUPABASE_URL}/rest/v1/custom_cards?card_id=eq.${encodeURIComponent(id)}`, { method: 'DELETE', headers: authHeaders() });
+  if (r.status === 401 && !retry) { await refreshSession(); return cloudDeleteCard(id, true); }
+}
+async function removeCustomCard(id, setId) {
+  if (!loggedIn()) { alert('カードの削除はログインが必要です。'); return; }
+  try { await cloudDeleteCard(id); } catch (e) { alert('削除に失敗しました：' + e.message); return; }
+  await loadCustomCards(setId);
+  if (setDetailCache[setId]) renderSet(setDetailCache[setId]);
+  toast('カードを削除しました');
 }
 
 // ---- pending（未保存の選択。保存済みと状態が異なるカードIDの集合） ----
@@ -524,6 +623,7 @@ async function goSet(id) {
   loading('カードを取得中...');
   try {
     const set = await getSet(id);
+    await loadCustomCards(id); // 手動登録カードを取得して合体
     curOwnedFilter = 'all';
     curRarities = new Set();
     renderSet(set);
@@ -533,10 +633,19 @@ async function goSet(id) {
 }
 
 function renderSet(set) {
-  const cards = set.cards || [];
+  // TCGdexのカード + 手動登録カード（共有マスタ）を合体し番号順に
+  const tcg = set.cards || [];
+  const extra = customCardsBySet[set.id] || [];
+  const exIds = new Set(tcg.map(c => c.id));
+  const cards = tcg.concat(extra.filter(c => !exIds.has(c.id)))
+    .sort((a, b) => String(a.localId).localeCompare(String(b.localId), undefined, { numeric: true }));
+  window._cards = cards; // openCard等から参照
+  window._curSet = set;
   view.innerHTML = `
     <div class="crumb"><a onclick="goSets()">セット一覧</a> ／ ${esc(set.name)}</div>
-    <h1 class="view-title">${esc(set.name)} <span style="font-size:13px;color:var(--muted)">(${set.id})</span></h1>
+    <h1 class="view-title">${esc(set.name)} <span style="font-size:13px;color:var(--muted)">(${set.id})</span>
+      <button class="btn" style="font-size:11px;padding:4px 10px;margin-left:6px" onclick="setPatternPrompt('${set.id}')">🖼 画像一括</button>
+      <button class="btn" style="font-size:11px;padding:4px 10px" onclick="openAddCard('${set.id}')">＋ カード追加</button></h1>
     <div class="sub" id="setSub"></div>
     <div class="filter-row">
       <span class="filter-label">状態</span>
@@ -668,8 +777,15 @@ async function openCard(id) {
   mb.classList.add('on');
   body.innerHTML = `<div class="loading"><div class="spinner"></div>読み込み中...</div>`;
   try {
-    const r = await fetch(API + '/cards/' + id);
-    const c = await r.json();
+    const localCard = (window._cards || []).find(x => x.id === id);
+    const isCustomCard = localCard && localCard.custom;
+    let c;
+    if (isCustomCard) {
+      c = { name: localCard.name, localId: localCard.localId, rarity: '手動登録', image: null, set: { name: (window._curSet && window._curSet.name) || '' } };
+    } else {
+      const r = await fetch(API + '/cards/' + id);
+      c = await r.json();
+    }
     const willOwn = displayOwned(id);
     const full = cardFull(c);
     const existing = anyCustomImg(id);
@@ -695,12 +811,17 @@ async function openCard(id) {
       <h3>${esc(c.name)}</h3>
       <div class="meta">No.${c.localId} ・ レアリティ <span>${esc(c.rarity||'不明')}</span><br>${esc((c.set&&c.set.name)||'')}</div>
       <button class="btn primary" style="width:100%" id="mToggle">${willOwn?'✓ 選択中（タップで外す）':'選択に追加する'}</button>
-      ${regHtml}`;
+      ${regHtml}
+      ${isCustomCard ? `<button class="btn ghost" style="width:100%;margin-top:8px;color:#f87171" id="delCard">このカードを一覧から削除</button>` : ''}`;
     document.getElementById('mToggle').onclick = () => {
       togglePending(id);
       closeModal();
       if (window._redrawSet) window._redrawSet();
     };
+    if (isCustomCard) {
+      const dc = document.getElementById('delCard');
+      if (dc) dc.onclick = async () => { const sid = window._curSet ? window._curSet.id : id.slice(0, id.lastIndexOf('-')); closeModal(); await removeCustomCard(id, sid); };
+    }
     if (!c.image) {
       const refresh = () => { closeModal(); if (window._redrawSet) window._redrawSet(); };
       document.getElementById('imgSave').onclick = async () => {
@@ -724,7 +845,88 @@ async function openCard(id) {
   }
 }
 function closeModal() { document.getElementById('modalBg').classList.remove('on'); }
-document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape') { closeModal(); closeAddCard(); } });
+
+// ---- カード追加モーダル（TCGdexに無いカードを共有マスタで補完） ----
+let curAddSet = null;
+function openAddCard(setId) {
+  if (!loggedIn()) { alert('カードの追加はログインが必要です（データ管理からログイン）。'); return; }
+  curAddSet = setId;
+  const total = (window._curSet && window._curSet.cardCount && window._curSet.cardCount.total) || 0;
+  document.getElementById('addCardBody').innerHTML = `
+    <h3 style="text-align:center;margin-bottom:4px">カードを追加</h3>
+    <p style="font-size:12px;color:var(--muted);text-align:center;margin-bottom:14px">${esc(setId)} に手動でカードを追加します（全員に共有）。</p>
+    <div class="data-sec">
+      <div class="data-title">個別に追加</div>
+      <input id="acNum" class="imgreg-input" placeholder="番号（例: 1 または 001）" style="margin-bottom:8px">
+      <input id="acName" class="imgreg-input" placeholder="カード名" style="margin-bottom:8px">
+      <input id="acImg" class="imgreg-input" placeholder="画像URL（任意）" style="margin-bottom:8px">
+      <div class="data-btns"><button class="btn primary" id="acAdd">このカードを追加</button></div>
+    </div>
+    <div class="data-sec">
+      <div class="data-title">一括で追加</div>
+      <textarea id="acBulk" class="imgreg-input" style="height:88px;resize:vertical" placeholder="1行1枚：「番号,名前,画像URL(任意)」\n例）001,リザードンex,https://...\n002,ピカチュウ"></textarea>
+      <div class="data-btns" style="margin-top:8px">
+        <button class="btn primary" id="acBulkAdd">一括追加</button>
+        ${total ? `<button class="btn" id="acGen">1〜${total}番を空生成</button>` : ''}
+      </div>
+      <div class="data-hint">「空生成」は番号だけのスロットを作ります（名前・画像は後で追加可）。</div>
+    </div>
+    <div style="text-align:center;margin-top:6px"><button class="btn ghost" onclick="closeAddCard()">閉じる</button></div>`;
+  document.getElementById('addCardBg').classList.add('on');
+  document.getElementById('acAdd').onclick = addOneCard;
+  document.getElementById('acBulkAdd').onclick = addBulkCards;
+  const gen = document.getElementById('acGen');
+  if (gen) gen.onclick = genEmptyCards;
+}
+function closeAddCard() { document.getElementById('addCardBg').classList.remove('on'); }
+
+function mkCardRow(setId, num, name, img) {
+  const lid = pad3(num);
+  return { card_id: `${setId}-${lid}`, set_id: setId, local_id: lid, name: (name || '').trim() || '(無名)', image_url: (img || '').trim() || null, updated_at: nowISO() };
+}
+async function commitCards(rows) {
+  if (!rows.length) { alert('追加する内容がありません。'); return; }
+  try {
+    await cloudPushCards(rows);
+    rows.forEach(r => { if (r.image_url) masterImg[r.card_id] = r.image_url; });
+    saveMasterCache();
+    await loadCustomCards(curAddSet);
+    if (setDetailCache[curAddSet]) renderSet(setDetailCache[curAddSet]);
+    closeAddCard();
+    toast(`${rows.length}枚を追加しました（全員に共有）`);
+  } catch (e) { alert('追加に失敗しました：' + e.message); }
+}
+function addOneCard() {
+  const num = val('acNum').trim();
+  if (!num) { alert('番号を入力してください。'); return; }
+  commitCards([mkCardRow(curAddSet, num, val('acName'), val('acImg'))]);
+}
+function addBulkCards() {
+  const lines = val('acBulk').split('\n').map(s => s.trim()).filter(Boolean);
+  const rows = [];
+  lines.forEach(line => {
+    const parts = line.split(',');
+    const num = (parts[0] || '').trim();
+    if (!num) return;
+    rows.push(mkCardRow(curAddSet, num, parts[1] || '', parts[2] || ''));
+  });
+  if (!rows.length) { alert('「番号,名前」の形式で入力してください。'); return; }
+  commitCards(rows);
+}
+function genEmptyCards() {
+  const total = (window._curSet && window._curSet.cardCount && window._curSet.cardCount.total) || 0;
+  if (!total) return;
+  const existing = new Set((customCardsBySet[curAddSet] || []).map(c => c.id).concat((window._cards || []).map(c => c.id)));
+  const rows = [];
+  for (let i = 1; i <= total; i++) {
+    const id = `${curAddSet}-${pad3(i)}`;
+    if (!existing.has(id)) rows.push(mkCardRow(curAddSet, i, '', ''));
+  }
+  if (!rows.length) { alert('生成する番号がありません（すでに揃っています）。'); return; }
+  if (!confirm(`${rows.length}件の空スロットを作成します。よろしいですか？`)) return;
+  commitCards(rows);
+}
 
 // ---- データ管理モーダル ----
 function openData() { renderCloudSec(); document.getElementById('dataBg').classList.add('on'); }
@@ -744,12 +946,9 @@ function renderCloudSec() {
     document.getElementById('cloudPullBtn').onclick = () => cloudInitialSync(true);
   } else {
     body.innerHTML = `
-      <div class="data-hint" style="margin-bottom:8px">ID（メール形式）とパスワードでログインすると、データがクラウドに保存され、PC・スマホで共有されます。初回は「新規登録」を押してください。</div>
-      <input id="authEmail" class="imgreg-input" placeholder="ID（例: rinta@poke.jp）" autocomplete="username" style="margin-bottom:8px">
-      <input id="authPw" class="imgreg-input" type="password" placeholder="パスワード（6文字以上）" autocomplete="current-password" style="margin-bottom:8px">
-      <div class="data-btns"><button class="btn primary" id="loginBtn">ログイン</button><button class="btn" id="signupBtn">新規登録</button></div>`;
-    document.getElementById('loginBtn').onclick = () => authFlow(false, val('authEmail'), val('authPw'));
-    document.getElementById('signupBtn').onclick = () => authFlow(true, val('authEmail'), val('authPw'));
+      <div class="data-hint" style="margin-bottom:10px">ID・パスワードでログインすると、データがクラウドに保存され PC・スマホで共有されます。</div>
+      <div class="data-btns"><button class="btn primary" id="toLoginScreen">ログイン / 新規登録</button></div>`;
+    document.getElementById('toLoginScreen').onclick = () => { closeData(); showLoginScreen(); };
   }
 }
 function val(id) { const el = document.getElementById(id); return el ? el.value : ''; }
@@ -989,6 +1188,7 @@ setCloudStatus();
 if (location.hash && location.hash.length > 1) goSet(location.hash.slice(1));
 else goSets();
 fetchMasterImages(); // 共有画像マスタを取得（未ログインでも表示に反映）
+fetchSetPatterns();  // セット画像パターンを取得
 if (loggedIn()) {
   cloudInitialSync(); // ログイン済みなら起動時にクラウドから取得
 } else if (cloudConfigured() && localStorage.getItem('pokecard_localonly') !== '1') {
