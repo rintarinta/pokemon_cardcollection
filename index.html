@@ -181,6 +181,7 @@
   <div class="brand" onclick="goSets()"><span class="dot"></span>ポケカ コレクション</div>
   <div class="grow"></div>
   <div class="stat">所有 <b id="totalOwned">0</b> 枚</div>
+  <div class="stat" id="syncStatus" style="color:var(--good)"></div>
   <input type="file" id="importFileJson" accept="application/json,.json" style="display:none">
   <input type="file" id="importFileCsv" accept=".csv,text/csv" style="display:none">
   <button class="btn" onclick="openData()">データ管理</button>
@@ -206,7 +207,11 @@
 <div class="modal-bg" id="dataBg" onclick="if(event.target===this)closeData()">
   <div class="modal" style="text-align:left;max-width:420px">
     <h3 style="text-align:center;margin-bottom:4px">データ管理</h3>
-    <p style="font-size:12px;color:var(--muted);text-align:center;margin-bottom:16px">所有データはこの端末のブラウザに保存されています。<br>定期的に書き出してバックアップしておくと安心です。</p>
+    <p style="font-size:12px;color:var(--muted);text-align:center;margin-bottom:16px">定期的に書き出してバックアップしておくと安心です。</p>
+    <div class="data-sec" id="cloudSec">
+      <div class="data-title">☁ クラウド同期</div>
+      <div id="cloudBody"></div>
+    </div>
     <div class="data-sec">
       <div class="data-title">バックアップを書き出す</div>
       <div class="data-btns">
@@ -235,17 +240,83 @@ const STORE_KEY = 'pokecard_owned_v1';
 const RARITY_MAP = { AR:'Illustration rare', SR:'Ultra Rare', SAR:'Special illustration rare', MUR:'Mega Hyper Rare' };
 const RARITY_CODES = Object.keys(RARITY_MAP);
 
+// ===== クラウド保存（Supabase・ID/パスワード認証）。未設定（空）ならローカルのみで動作 =====
+const SUPABASE_URL = 'https://utilhmilvmrptzrjljdt.supabase.co';
+const SUPABASE_ANON = 'sb_publishable_1UA3-wEvmzBVIrp4DJqy0Q_TiC0Q451'; // publishable(anon相当)キー。RLSで本人の行のみアクセス可なので公開OK
+const SESSION_KEY = 'pokecard_session';
+let session = null; try { session = JSON.parse(localStorage.getItem(SESSION_KEY)) || null; } catch {}
+let cloudTimer = null;
+function cloudConfigured() { return !!(SUPABASE_URL && SUPABASE_ANON); }
+function loggedIn() { return cloudConfigured() && session && !!session.access_token; }
+function anonHeaders(extra) { return Object.assign({ apikey: SUPABASE_ANON, 'Content-Type': 'application/json' }, extra || {}); }
+function authHeaders(extra) { return Object.assign({ apikey: SUPABASE_ANON, Authorization: 'Bearer ' + session.access_token }, extra || {}); }
+function setCloudStatus(t) { const el = document.getElementById('syncStatus'); if (el) el.textContent = t || (loggedIn() ? '☁ ' + (session.email || 'ログイン中') : ''); }
+function nowISO() { try { return new Date().toISOString(); } catch { return ''; } }
+function persistSession() { try { localStorage.setItem(SESSION_KEY, JSON.stringify(session)); } catch {} }
+
+// --- 認証 ---
+async function authPost(path, body) {
+  const r = await fetch(`${SUPABASE_URL}/auth/v1/${path}`, { method: 'POST', headers: anonHeaders(), body: JSON.stringify(body) });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(d.error_description || d.msg || d.error || ('認証エラー ' + r.status));
+  return d;
+}
+async function doSignup(email, pw) {
+  const d = await authPost('signup', { email, password: pw });
+  if (d.access_token) { session = { access_token: d.access_token, refresh_token: d.refresh_token, email }; persistSession(); return true; }
+  // メール確認が有効な設定の場合はトークンが返らない
+  return false;
+}
+async function doLogin(email, pw) {
+  const d = await authPost('token?grant_type=password', { email, password: pw });
+  session = { access_token: d.access_token, refresh_token: d.refresh_token, email }; persistSession();
+}
+async function refreshSession() {
+  if (!session || !session.refresh_token) throw new Error('no session');
+  const d = await authPost('token?grant_type=refresh_token', { refresh_token: session.refresh_token });
+  session.access_token = d.access_token; session.refresh_token = d.refresh_token; persistSession();
+}
+
+// --- データ入出力（RLSで本人の行のみ。user_idはDB側でauth.uid()を既定値に） ---
+async function cloudFetch(retry) {
+  const r = await fetch(`${SUPABASE_URL}/rest/v1/collections?select=data,updated_at`, { headers: authHeaders() });
+  if (r.status === 401 && !retry) { await refreshSession(); return cloudFetch(true); }
+  if (!r.ok) throw new Error('取得 ' + r.status);
+  const rows = await r.json();
+  return rows[0] || null;
+}
+async function cloudPush(retry) {
+  const payload = [{ data: { owned, images: customImg }, updated_at: nowISO() }];
+  const r = await fetch(`${SUPABASE_URL}/rest/v1/collections?on_conflict=user_id`, {
+    method: 'POST',
+    headers: authHeaders({ 'Content-Type': 'application/json', Prefer: 'resolution=merge-duplicates,return=minimal' }),
+    body: JSON.stringify(payload)
+  });
+  if (r.status === 401 && !retry) { await refreshSession(); return cloudPush(true); }
+  if (!r.ok) throw new Error('保存 ' + r.status);
+}
+function scheduleCloudSave() {
+  if (!loggedIn()) return;
+  clearTimeout(cloudTimer);
+  setCloudStatus('保存中…');
+  cloudTimer = setTimeout(async () => {
+    try { await cloudPush(); setCloudStatus('☁ 同期済み'); }
+    catch { setCloudStatus('⚠ 同期失敗（オフライン？）'); }
+  }, 800);
+}
+
 // ---- owned state（保存済み） ----
 let owned = loadOwned();
 function loadOwned() {
   try { return JSON.parse(localStorage.getItem(STORE_KEY)) || {}; }
   catch { return {}; }
 }
-function saveOwned() {
+function saveOwnedLocal() {
   try { localStorage.setItem(STORE_KEY, JSON.stringify(owned)); }
   catch (e) { alert('保存に失敗しました（ブラウザの保存容量が上限の可能性）。\nデータ管理から書き出してバックアップしてください。'); }
   refreshTotal();
 }
+function saveOwned() { saveOwnedLocal(); scheduleCloudSave(); }
 function isOwned(id) { return !!owned[id]; }
 function ownedCountForSet(setId) { const p = setId + '-'; let n = 0; for (const k in owned) if (k.startsWith(p)) n++; return n; }
 function refreshTotal() { document.getElementById('totalOwned').textContent = Object.keys(owned).length; }
@@ -254,10 +325,11 @@ function refreshTotal() { document.getElementById('totalOwned').textContent = Ob
 const IMG_KEY = 'pokecard_images_v1';
 let customImg = loadImages();
 function loadImages() { try { return JSON.parse(localStorage.getItem(IMG_KEY)) || {}; } catch { return {}; } }
-function saveImages() {
+function saveImagesLocal() {
   try { localStorage.setItem(IMG_KEY, JSON.stringify(customImg)); }
   catch (e) { alert('画像の保存に失敗しました（保存容量の上限の可能性）。\nファイル画像は容量が大きいため、URL登録の利用や不要画像の削除をおすすめします。'); }
 }
+function saveImages() { saveImagesLocal(); scheduleCloudSave(); }
 // WebPはPNGの約1/11で軽い（iOS14+/主要ブラウザ対応）。読込高速化のため採用
 function cardThumb(c) { return c.image ? c.image + '/low.webp' : (customImg[c.id] || null); }
 function cardFull(c)  { return c.image ? c.image + '/high.webp' : (customImg[c.id] || null); }
@@ -583,8 +655,87 @@ function closeModal() { document.getElementById('modalBg').classList.remove('on'
 document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
 
 // ---- データ管理モーダル ----
-function openData() { document.getElementById('dataBg').classList.add('on'); }
+function openData() { renderCloudSec(); document.getElementById('dataBg').classList.add('on'); }
 function closeData() { document.getElementById('dataBg').classList.remove('on'); }
+
+function renderCloudSec() {
+  const body = document.getElementById('cloudBody');
+  if (!cloudConfigured()) {
+    body.innerHTML = `<div class="data-hint">クラウド設定が未完了です。設定が入るとID・パスワードでログインできます。</div>`;
+    return;
+  }
+  if (loggedIn()) {
+    body.innerHTML = `
+      <div class="data-hint" style="margin-bottom:8px"><b style="color:var(--good)">${esc(session.email || 'ログイン中')}</b> でログイン中。<br>他の端末でも同じID・パスワードでログインすると同じデータになります。</div>
+      <div class="data-btns"><button class="btn" id="cloudPullBtn">今すぐ取得</button><button class="btn ghost" id="cloudLogoutBtn">ログアウト</button></div>`;
+    document.getElementById('cloudLogoutBtn').onclick = logout;
+    document.getElementById('cloudPullBtn').onclick = () => cloudInitialSync(true);
+  } else {
+    body.innerHTML = `
+      <div class="data-hint" style="margin-bottom:8px">ID（メール形式）とパスワードでログインすると、データがクラウドに保存され、PC・スマホで共有されます。初回は「新規登録」を押してください。</div>
+      <input id="authEmail" class="imgreg-input" placeholder="ID（例: rinta@poke.jp）" autocomplete="username" style="margin-bottom:8px">
+      <input id="authPw" class="imgreg-input" type="password" placeholder="パスワード（6文字以上）" autocomplete="current-password" style="margin-bottom:8px">
+      <div class="data-btns"><button class="btn primary" id="loginBtn">ログイン</button><button class="btn" id="signupBtn">新規登録</button></div>`;
+    document.getElementById('loginBtn').onclick = () => authFlow(false);
+    document.getElementById('signupBtn').onclick = () => authFlow(true);
+  }
+}
+
+async function authFlow(isSignup) {
+  const email = (document.getElementById('authEmail').value || '').trim();
+  const pw = document.getElementById('authPw').value || '';
+  if (!email || !pw) { alert('IDとパスワードを入力してください。'); return; }
+  if (pw.length < 6) { alert('パスワードは6文字以上にしてください。'); return; }
+  setCloudStatus('接続中…');
+  try {
+    if (isSignup) {
+      const ok = await doSignup(email, pw);
+      if (!ok) { await doLogin(email, pw); } // 確認メール設定時などはログインで取得
+    } else {
+      await doLogin(email, pw);
+    }
+    // ログイン後：クラウドの本人データと突き合わせ
+    const remote = await cloudFetch();
+    const hasRemote = remote && remote.data && (Object.keys(remote.data.owned || {}).length || Object.keys(remote.data.images || {}).length);
+    const hasLocal = Object.keys(owned).length || Object.keys(customImg).length;
+    if (hasRemote) {
+      let useRemote = true;
+      if (hasLocal) useRemote = confirm('クラウドに保存済みのデータがあります。\n[OK]=クラウドのデータを読み込む\n[キャンセル]=この端末のデータでクラウドを上書き');
+      if (useRemote) { owned = remote.data.owned || {}; customImg = remote.data.images || {}; saveOwnedLocal(); saveImagesLocal(); }
+      else { await cloudPush(); }
+    } else {
+      await cloudPush(); // クラウド空 → 今の端末のデータをアップ
+    }
+    setCloudStatus('☁ 同期済み');
+    closeData(); toast(isSignup ? '登録してログインしました' : 'ログインしました'); rerender();
+  } catch (e) {
+    setCloudStatus('⚠ 失敗');
+    alert((isSignup ? '登録' : 'ログイン') + 'に失敗しました。\n' + e.message);
+  }
+}
+function logout() {
+  session = null;
+  try { localStorage.removeItem(SESSION_KEY); } catch {}
+  setCloudStatus('');
+  toast('ログアウトしました（この端末のローカル保存のみ）');
+  renderCloudSec();
+}
+async function cloudInitialSync(manual) {
+  if (!loggedIn()) return;
+  setCloudStatus('同期中…');
+  try {
+    const remote = await cloudFetch();
+    if (remote && remote.data) {
+      owned = remote.data.owned || {}; customImg = remote.data.images || {};
+      saveOwnedLocal(); saveImagesLocal(); rerender();
+    }
+    setCloudStatus('☁ 同期済み');
+    if (manual) { toast('クラウドから取得しました'); closeData(); }
+  } catch (e) {
+    setCloudStatus('⚠ オフライン（ローカル表示）');
+    if (manual) alert('取得に失敗しました。\n' + e.message);
+  }
+}
 
 function ts() { try { return new Date().toISOString().slice(0,10); } catch { return 'backup'; } }
 function download(text, name, type) {
@@ -721,8 +872,10 @@ window.addEventListener('hashchange', () => {
 
 // ---- boot ----
 refreshTotal();
+setCloudStatus();
 if (location.hash && location.hash.length > 1) goSet(location.hash.slice(1));
 else goSets();
+if (loggedIn()) cloudInitialSync(); // ログイン済みなら起動時にクラウドから取得
 </script>
 </body>
 </html>
