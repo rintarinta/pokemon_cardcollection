@@ -172,6 +172,20 @@
   .data-btns { display: flex; gap: 8px; margin-bottom: 8px; }
   .data-btns .btn { flex: 1; }
   .data-hint { font-size: 11.5px; color: var(--muted); line-height: 1.6; }
+  /* Login screen */
+  .login-screen { position: fixed; inset: 0; z-index: 80; background: var(--bg); display: none; align-items: center; justify-content: center; padding: 20px; }
+  .login-screen.on { display: flex; }
+  .login-card { width: 100%; max-width: 360px; text-align: center; }
+  .login-card .logo { display: flex; align-items: center; justify-content: center; gap: 10px; font-size: 20px; font-weight: 800; margin-bottom: 8px; }
+  .login-card .logo .dot { width: 26px; height: 26px; border-radius: 50%; background: linear-gradient(#ef4444 0 50%, #fff 50% 100%); border: 2px solid #1a1a1a; position: relative; }
+  .login-card .logo .dot::after { content:''; position:absolute; inset:0; margin:auto; width:8px; height:8px; background:#fff; border:2px solid #1a1a1a; border-radius:50%; }
+  .login-card .lead { color: var(--muted); font-size: 12.5px; margin-bottom: 22px; line-height: 1.7; }
+  .login-card input { width: 100%; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; color: var(--text); font-size: 15px; font-family: inherit; margin-bottom: 10px; }
+  .login-card input:focus { outline: none; border-color: var(--accent); }
+  .login-card .row { display: flex; gap: 10px; margin-top: 4px; }
+  .login-card .row .btn { flex: 1; padding: 12px; font-size: 14px; }
+  .login-card .skip { display: inline-block; margin-top: 22px; color: var(--muted); font-size: 12px; text-decoration: underline; cursor: pointer; background: none; border: none; font-family: inherit; }
+  .login-card .skip:hover { color: var(--text); }
   .toast { position: fixed; bottom: 78px; left: 50%; transform: translateX(-50%); background: var(--good); color: #042; padding: 10px 20px; border-radius: 30px; font-weight: 700; font-size: 13px; opacity: 0; transition: opacity .2s, transform .2s; pointer-events: none; z-index: 60; }
   .toast.on { opacity: 1; transform: translateX(-50%) translateY(-4px); }
 </style>
@@ -232,6 +246,21 @@
   </div>
 </div>
 <div class="toast" id="toast"></div>
+
+<!-- ログイン画面（起動時・未ログイン時に表示） -->
+<div class="login-screen" id="loginScreen">
+  <div class="login-card">
+    <div class="logo"><span class="dot"></span>ポケカ コレクション</div>
+    <div class="lead">ID（メール形式）とパスワードでログインすると、<br>データがクラウドに保存され、<b>PC・スマホで共有</b>されます。<br>初めての方は「新規登録」から。</div>
+    <input id="loginEmail" placeholder="ID（例: rinta@poke.jp）" autocomplete="username" autocapitalize="none">
+    <input id="loginPw" type="password" placeholder="パスワード（6文字以上）" autocomplete="current-password">
+    <div class="row">
+      <button class="btn primary" id="loginScreenLogin">ログイン</button>
+      <button class="btn" id="loginScreenSignup">新規登録</button>
+    </div>
+    <button class="skip" id="loginSkip">アカウントを使わず、この端末だけで使う</button>
+  </div>
+</div>
 
 <script>
 const API = 'https://api.tcgdex.net/v2/ja';
@@ -676,14 +705,15 @@ function renderCloudSec() {
       <input id="authEmail" class="imgreg-input" placeholder="ID（例: rinta@poke.jp）" autocomplete="username" style="margin-bottom:8px">
       <input id="authPw" class="imgreg-input" type="password" placeholder="パスワード（6文字以上）" autocomplete="current-password" style="margin-bottom:8px">
       <div class="data-btns"><button class="btn primary" id="loginBtn">ログイン</button><button class="btn" id="signupBtn">新規登録</button></div>`;
-    document.getElementById('loginBtn').onclick = () => authFlow(false);
-    document.getElementById('signupBtn').onclick = () => authFlow(true);
+    document.getElementById('loginBtn').onclick = () => authFlow(false, val('authEmail'), val('authPw'));
+    document.getElementById('signupBtn').onclick = () => authFlow(true, val('authEmail'), val('authPw'));
   }
 }
+function val(id) { const el = document.getElementById(id); return el ? el.value : ''; }
 
-async function authFlow(isSignup) {
-  const email = (document.getElementById('authEmail').value || '').trim();
-  const pw = document.getElementById('authPw').value || '';
+async function authFlow(isSignup, emailArg, pwArg) {
+  const email = (emailArg || '').trim();
+  const pw = pwArg || '';
   if (!email || !pw) { alert('IDとパスワードを入力してください。'); return; }
   if (pw.length < 6) { alert('パスワードは6文字以上にしてください。'); return; }
   setCloudStatus('接続中…');
@@ -707,6 +737,8 @@ async function authFlow(isSignup) {
       await cloudPush(); // クラウド空 → 今の端末のデータをアップ
     }
     setCloudStatus('☁ 同期済み');
+    try { localStorage.removeItem('pokecard_localonly'); } catch {}
+    hideLoginScreen();
     closeData(); toast(isSignup ? '登録してログインしました' : 'ログインしました'); rerender();
   } catch (e) {
     setCloudStatus('⚠ 失敗');
@@ -715,10 +747,12 @@ async function authFlow(isSignup) {
 }
 function logout() {
   session = null;
-  try { localStorage.removeItem(SESSION_KEY); } catch {}
+  try { localStorage.removeItem(SESSION_KEY); localStorage.removeItem('pokecard_localonly'); } catch {}
   setCloudStatus('');
-  toast('ログアウトしました（この端末のローカル保存のみ）');
   renderCloudSec();
+  closeData();
+  toast('ログアウトしました');
+  if (cloudConfigured()) showLoginScreen();
 }
 async function cloudInitialSync(manual) {
   if (!loggedIn()) return;
@@ -870,12 +904,27 @@ window.addEventListener('hashchange', () => {
   if (h) goSet(h); else goSets();
 });
 
+// ---- ログイン画面 ----
+function showLoginScreen() { document.getElementById('loginScreen').classList.add('on'); }
+function hideLoginScreen() { document.getElementById('loginScreen').classList.remove('on'); }
+document.getElementById('loginScreenLogin').onclick = () => authFlow(false, val('loginEmail'), val('loginPw'));
+document.getElementById('loginScreenSignup').onclick = () => authFlow(true, val('loginEmail'), val('loginPw'));
+document.getElementById('loginSkip').onclick = () => {
+  try { localStorage.setItem('pokecard_localonly', '1'); } catch {}
+  hideLoginScreen();
+  toast('この端末だけで使います（後でデータ管理からログインできます）');
+};
+
 // ---- boot ----
 refreshTotal();
 setCloudStatus();
 if (location.hash && location.hash.length > 1) goSet(location.hash.slice(1));
 else goSets();
-if (loggedIn()) cloudInitialSync(); // ログイン済みなら起動時にクラウドから取得
+if (loggedIn()) {
+  cloudInitialSync(); // ログイン済みなら起動時にクラウドから取得
+} else if (cloudConfigured() && localStorage.getItem('pokecard_localonly') !== '1') {
+  showLoginScreen(); // 未ログイン かつ「ローカルのみ」未選択 → ログイン画面
+}
 </script>
 </body>
 </html>
