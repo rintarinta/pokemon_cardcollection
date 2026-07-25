@@ -247,19 +247,9 @@
 </div>
 <div class="toast" id="toast"></div>
 
-<!-- ログイン画面（起動時・未ログイン時に表示） -->
+<!-- ログイン/新規登録画面（起動時・未ログイン時に表示。中身はJSで描画） -->
 <div class="login-screen" id="loginScreen">
-  <div class="login-card">
-    <div class="logo"><span class="dot"></span>ポケカ コレクション</div>
-    <div class="lead">ID（メール形式）とパスワードでログインすると、<br>データがクラウドに保存され、<b>PC・スマホで共有</b>されます。<br>初めての方は「新規登録」から。</div>
-    <input id="loginEmail" placeholder="ID（例: rinta@poke.jp）" autocomplete="username" autocapitalize="none">
-    <input id="loginPw" type="password" placeholder="パスワード（6文字以上）" autocomplete="current-password">
-    <div class="row">
-      <button class="btn primary" id="loginScreenLogin">ログイン</button>
-      <button class="btn" id="loginScreenSignup">新規登録</button>
-    </div>
-    <button class="skip" id="loginSkip">アカウントを使わず、この端末だけで使う</button>
-  </div>
+  <div class="login-card" id="loginCard"></div>
 </div>
 
 <script>
@@ -904,16 +894,40 @@ window.addEventListener('hashchange', () => {
   if (h) goSet(h); else goSets();
 });
 
-// ---- ログイン画面 ----
-function showLoginScreen() { document.getElementById('loginScreen').classList.add('on'); }
+// ---- ログイン/新規登録画面 ----
+let loginMode = 'login';
+function renderLoginScreen() {
+  const card = document.getElementById('loginCard');
+  if (loginMode === 'signup') {
+    card.innerHTML = `
+      <div class="logo"><span class="dot"></span>ポケカ コレクション</div>
+      <div class="lead"><b style="font-size:15px;color:var(--text)">新規登録</b><br>IDとパスワードを決めてください。<br>以降どの端末からでもこのID・パスワードでログインできます。</div>
+      <input id="suEmail" placeholder="ID（例: rinta@poke.jp）" autocomplete="username" autocapitalize="none">
+      <input id="suPw" type="password" placeholder="パスワード（6文字以上）" autocomplete="new-password">
+      <div class="row"><button class="btn primary" id="suBtn">登録する</button></div>
+      <button class="skip" id="toLogin">← ログイン画面にもどる</button>`;
+    document.getElementById('suBtn').onclick = () => authFlow(true, val('suEmail'), val('suPw'));
+    document.getElementById('toLogin').onclick = () => { loginMode = 'login'; renderLoginScreen(); };
+  } else {
+    card.innerHTML = `
+      <div class="logo"><span class="dot"></span>ポケカ コレクション</div>
+      <div class="lead">ID・パスワードでログインすると、データがクラウドに保存され<br><b>PC・スマホで同じコレクション</b>を使えます。</div>
+      <input id="loginEmail" placeholder="ID（例: rinta@poke.jp）" autocomplete="username" autocapitalize="none">
+      <input id="loginPw" type="password" placeholder="パスワード" autocomplete="current-password">
+      <div class="row"><button class="btn primary" id="liBtn">ログイン</button></div>
+      <button class="skip" id="toSignup" style="margin-top:18px;color:var(--accent);font-size:13px">はじめての方 → 新規登録はこちら</button>
+      <br><button class="skip" id="loginSkip">アカウントを使わず、この端末だけで使う</button>`;
+    document.getElementById('liBtn').onclick = () => authFlow(false, val('loginEmail'), val('loginPw'));
+    document.getElementById('toSignup').onclick = () => { loginMode = 'signup'; renderLoginScreen(); };
+    document.getElementById('loginSkip').onclick = () => {
+      try { localStorage.setItem('pokecard_localonly', '1'); } catch {}
+      hideLoginScreen();
+      toast('この端末だけで使います（後でデータ管理からログインできます）');
+    };
+  }
+}
+function showLoginScreen() { loginMode = 'login'; renderLoginScreen(); document.getElementById('loginScreen').classList.add('on'); }
 function hideLoginScreen() { document.getElementById('loginScreen').classList.remove('on'); }
-document.getElementById('loginScreenLogin').onclick = () => authFlow(false, val('loginEmail'), val('loginPw'));
-document.getElementById('loginScreenSignup').onclick = () => authFlow(true, val('loginEmail'), val('loginPw'));
-document.getElementById('loginSkip').onclick = () => {
-  try { localStorage.setItem('pokecard_localonly', '1'); } catch {}
-  hideLoginScreen();
-  toast('この端末だけで使います（後でデータ管理からログインできます）');
-};
 
 // ---- boot ----
 refreshTotal();
