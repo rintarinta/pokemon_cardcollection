@@ -86,6 +86,8 @@
   .chip { background: var(--panel); border: 1px solid var(--line); color: var(--muted); padding: 6px 13px; border-radius: 20px; font-size: 12px; cursor: pointer; user-select: none; }
   .chip.on { background: var(--accent2); color: #012; border-color: var(--accent2); font-weight: 700; }
   .chip.rar.on { background: var(--gold); border-color: var(--gold); color: #3a2a00; }
+  .chip.rar-set { background: var(--panel2); }
+  .chip.rar-set.on { background: var(--gold); border-color: var(--gold); color: #3a2a00; font-weight: 700; }
   .rar-note { font-size: 11.5px; color: var(--warn); margin: -6px 0 14px; display: none; }
   .rar-note.on { display: block; }
 
@@ -114,6 +116,10 @@
   .poke .num {
     position: absolute; top: 5px; left: 5px; background: rgba(0,0,0,.7);
     font-size: 10px; padding: 1px 6px; border-radius: 5px; color: #fff; font-weight: 600;
+  }
+  .poke .rar-badge {
+    position: absolute; top: 26px; left: 5px; background: var(--gold); color: #3a2a00;
+    font-size: 10px; font-weight: 800; padding: 1px 6px; border-radius: 5px; letter-spacing: .03em;
   }
   .poke .check {
     position: absolute; top: 5px; right: 5px; width: 22px; height: 22px; border-radius: 50%;
@@ -461,6 +467,46 @@ async function removeImage(id) {
   toast('画像を削除しました');
 }
 
+// ===== 手動レア度（共有マスタ card_rarities）。TCGdexが未整備でもフィルタを効かせる =====
+const RAR_KEY = 'pokecard_masterrarity';
+let masterRarity = {}; try { masterRarity = JSON.parse(localStorage.getItem(RAR_KEY)) || {}; } catch {}
+function saveRarityCache() { try { localStorage.setItem(RAR_KEY, JSON.stringify(masterRarity)); } catch {} }
+async function fetchMasterRarity() {
+  if (!cloudConfigured()) return;
+  try {
+    const r = await fetch(`${SUPABASE_URL}/rest/v1/card_rarities?select=card_id,rarity`, { headers: { apikey: SUPABASE_ANON } });
+    if (!r.ok) return;
+    const m = {}; (await r.json()).forEach(x => { m[x.card_id] = x.rarity; });
+    masterRarity = m; saveRarityCache();
+    if (window._redrawSet) window._redrawSet();
+  } catch {}
+}
+async function cloudPushRarity(id, rar, retry) {
+  const r = await fetch(`${SUPABASE_URL}/rest/v1/card_rarities?on_conflict=card_id`, {
+    method: 'POST', headers: authHeaders({ 'Content-Type': 'application/json', Prefer: 'resolution=merge-duplicates,return=minimal' }),
+    body: JSON.stringify([{ card_id: id, rarity: rar, updated_at: nowISO() }])
+  });
+  if (r.status === 401 && !retry) { await refreshSession(); return cloudPushRarity(id, rar, true); }
+  if (!r.ok) throw new Error('レア度 ' + r.status);
+}
+async function cloudDeleteRarity(id, retry) {
+  const r = await fetch(`${SUPABASE_URL}/rest/v1/card_rarities?card_id=eq.${encodeURIComponent(id)}`, { method: 'DELETE', headers: authHeaders() });
+  if (r.status === 401 && !retry) { await refreshSession(); return cloudDeleteRarity(id, true); }
+}
+async function setRarity(id, rar) {
+  if (!loggedIn()) { alert('レア度の登録はログインが必要です。'); return; }
+  if (rar) { await cloudPushRarity(id, rar); masterRarity[id] = rar; }
+  else { await cloudDeleteRarity(id); delete masterRarity[id]; }
+  saveRarityCache();
+}
+// 表示用レア度: 手動 > TCGdexバケット（フィルタ読込済みなら）
+function dispRarity(c) {
+  if (masterRarity[c.id]) return masterRarity[c.id];
+  const sid = setIdOf(c), idx = rarityIndex[sid];
+  if (idx) for (const code of RARITY_CODES) if ((idx[code] || new Set()).has(c.id)) return code;
+  return '';
+}
+
 // ===== 手動カード登録（TCGdexに無いカードを共有マスタで補完。custom_cardsテーブル） =====
 const customCardsBySet = {}; // setId -> [{id,localId,name,image:null,custom:true}]
 function pad3(n) { const s = String(n).replace(/[^0-9]/g, ''); return s ? s.padStart(3, '0') : String(n); }
@@ -627,6 +673,7 @@ async function goSet(id) {
     curOwnedFilter = 'all';
     curRarities = new Set();
     renderSet(set);
+    ensureRarity(id).then(() => { if (window._redrawSet) window._redrawSet(); }); // レア度バッジ用（非同期）
   } catch (e) {
     view.innerHTML = `<div class="empty">カードの取得に失敗しました。<br><small>${e.message}</small></div>`;
   }
@@ -660,7 +707,7 @@ function renderSet(set) {
       <span class="chip rar" data-r="SAR">SAR</span>
       <span class="chip rar" data-r="MUR">MUR</span>
     </div>
-    <div class="rar-note" id="rarNote">このセットは AR/SR/SAR/MUR のレアリティ情報が未整備です（TCGdexの日本語データの制約。主に旧SV弾）。</div>
+    <div class="rar-note" id="rarNote">該当レア度のカードが見つかりません。TCGdex未整備の弾でも、各カードのⓘ →「レア度」で手動設定すればここで絞り込めます（全員に共有）。</div>
     <div class="card-grid" id="cardGrid"></div>`;
 
   const grid = document.getElementById('cardGrid');
@@ -686,14 +733,16 @@ function renderSet(set) {
       grid.innerHTML = `<div class="empty">このセットのカードデータが TCGdex にまだありません。<br><small>${esc(set.name)}（${set.id}）・データが追加されれば自動で表示されます</small></div>`;
       return;
     }
-    // レア度フィルタ適用対象IDの算出
+    // レア度フィルタ適用対象IDの算出（TCGdexバケット＋手動レア度）
     let rarPass = null; // null = フィルタ無し
-    if (curRarities.size && rarityIndex[set.id]) {
+    if (curRarities.size) {
       rarPass = new Set();
-      curRarities.forEach(code => (rarityIndex[set.id][code] || new Set()).forEach(id => rarPass.add(id)));
-      // このセットに該当レア度データが全く無い場合は注意表示
-      const anyData = RARITY_CODES.some(c => (rarityIndex[set.id][c] || new Set()).size > 0);
-      document.getElementById('rarNote').classList.toggle('on', !anyData);
+      const idx = rarityIndex[set.id] || {};
+      curRarities.forEach(code => {
+        (idx[code] || new Set()).forEach(id => rarPass.add(id));
+        for (const cid in masterRarity) if (masterRarity[cid] === code) rarPass.add(cid); // 手動レア度
+      });
+      document.getElementById('rarNote').classList.toggle('on', rarPass.size === 0);
     } else {
       document.getElementById('rarNote').classList.remove('on');
     }
@@ -723,9 +772,11 @@ function renderSet(set) {
       const img = src
         ? `<img src="${src}" alt="${esc(c.name)}" loading="lazy" decoding="async" onerror="this.outerHTML='${noimgHtml}'">`
         : `<div class="noimg"><small style="color:#60a5fa">ⓘで画像追加</small></div>`;
+      const rar = dispRarity(c);
       return `<div class="poke ${cls}" data-id="${c.id}">
         ${img}
         <div class="num">${c.localId}</div>
+        ${rar ? `<div class="rar-badge">${esc(rar)}</div>` : ''}
         <div class="check">✓</div>
         <div class="flag">${isRm ? '削除予定' : '追加予定'}</div>
         <div class="nm">${esc(c.name)}</div>
@@ -809,11 +860,20 @@ async function openCard(id) {
         <input type="file" id="imgFile" accept="image/*" style="display:none">
         <div class="imgreg-hint">${loggedIn()?'登録するとログイン利用者みんなに共有されます。':'ログインすると全員に共有できます（今はこの端末のみ保存）。'}公式カード画像のURL貼付けがおすすめ。</div>
       </div>`;
+    const rarEditHtml = `
+      <div class="imgreg">
+        <div class="imgreg-title">レア度（手動・全員に共有）</div>
+        <div id="rarEdit" style="display:flex;gap:6px;flex-wrap:wrap">
+          ${['AR','SR','SAR','MUR'].map(code => `<span class="chip rar-set ${masterRarity[id] === code ? 'on' : ''}" data-r="${code}">${code}</span>`).join('')}
+          <span class="chip rar-set" data-r="">クリア</span>
+        </div>
+      </div>`;
     body.innerHTML = `
       ${imgHtml}
       <h3>${esc(c.name)}</h3>
-      <div class="meta">No.${c.localId} ・ レアリティ <span>${esc(c.rarity||'不明')}</span><br>${esc((c.set&&c.set.name)||'')}</div>
+      <div class="meta">No.${c.localId} ・ レアリティ <span>${esc(masterRarity[id] || c.rarity || '不明')}</span><br>${esc((c.set&&c.set.name)||'')}</div>
       <button class="btn primary" style="width:100%" id="mToggle">${willOwn?'✓ 選択中（タップで外す）':'選択に追加する'}</button>
+      ${rarEditHtml}
       ${regHtml}
       ${isCustomCard ? `<button class="btn ghost" style="width:100%;margin-top:8px;color:#f87171" id="delCard">このカードを一覧から削除</button>` : ''}`;
     document.getElementById('mToggle').onclick = () => {
@@ -821,6 +881,16 @@ async function openCard(id) {
       closeModal();
       if (window._redrawSet) window._redrawSet();
     };
+    body.querySelectorAll('.rar-set').forEach(chip => {
+      chip.onclick = async () => {
+        try {
+          await setRarity(id, chip.dataset.r || null);
+          body.querySelectorAll('.rar-set').forEach(x => x.classList.toggle('on', x.dataset.r && x.dataset.r === masterRarity[id]));
+          if (window._redrawSet) window._redrawSet();
+          toast(chip.dataset.r ? `レア度を ${chip.dataset.r} に設定` : 'レア度をクリア');
+        } catch (e) { alert('レア度の設定に失敗：' + e.message); }
+      };
+    });
     if (isCustomCard) {
       const dc = document.getElementById('delCard');
       if (dc) dc.onclick = async () => { const sid = window._curSet ? window._curSet.id : id.slice(0, id.lastIndexOf('-')); closeModal(); await removeCustomCard(id, sid); };
@@ -1192,6 +1262,7 @@ if (location.hash && location.hash.length > 1) goSet(location.hash.slice(1));
 else goSets();
 fetchMasterImages(); // 共有画像マスタを取得（未ログインでも表示に反映）
 fetchSetPatterns();  // セット画像パターンを取得
+fetchMasterRarity(); // 手動レア度を取得
 if (loggedIn()) {
   cloudInitialSync(); // ログイン済みなら起動時にクラウドから取得
 } else if (cloudConfigured() && localStorage.getItem('pokecard_localonly') !== '1') {
