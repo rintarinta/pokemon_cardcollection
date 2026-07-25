@@ -717,10 +717,10 @@ function renderSet(set) {
       let cls = dOwned ? 'owned' : 'unowned';
       if (isPend) cls += isRm ? ' pending rm' : ' pending';
       const src = cardThumb(c);
-      const noimgHtml = `<div class=\\'noimg\\'><b style=\\'font-size:12px;color:#cbd5e1\\'>No.${c.localId}</b><br>${esc(c.name)}<br><small>画像なし</small></div>`;
+      const noimgHtml = `<div class=\\'noimg\\'><b style=\\'font-size:13px;color:#cbd5e1\\'>No.${c.localId}</b><br>${esc(c.name)}<br><small style=\\'color:#60a5fa\\'>ⓘで画像追加</small></div>`;
       const img = src
         ? `<img src="${src}" alt="${esc(c.name)}" loading="lazy" decoding="async" onerror="this.parentNode.innerHTML='${noimgHtml}'">`
-        : `<div class="noimg"><b style="font-size:12px;color:#cbd5e1">No.${c.localId}</b><br>${esc(c.name)}<br><small>ⓘから画像登録</small></div>`;
+        : `<div class="noimg"><b style="font-size:13px;color:#cbd5e1">No.${c.localId}</b><br>${esc(c.name)}<br><small style="color:#60a5fa">ⓘで画像追加</small></div>`;
       return `<div class="poke ${cls}" data-id="${c.id}">
         ${img}
         <div class="num">${c.localId}</div>
