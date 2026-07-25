@@ -571,6 +571,12 @@ function renderSet(set) {
   drawOwnedChips(); drawRarChips();
 
   function drawCards() {
+    // このセットはTCGdexにカード実データが無い（枚数だけ登録され中身が空）
+    if (!cards.length) {
+      document.getElementById('setSub').innerHTML = `カード ${(set.cardCount && set.cardCount.total) || 0} 枚（データ未整備）`;
+      grid.innerHTML = `<div class="empty">このセットのカードデータが TCGdex にまだありません。<br><small>${esc(set.name)}（${set.id}）・データが追加されれば自動で表示されます</small></div>`;
+      return;
+    }
     // レア度フィルタ適用対象IDの算出
     let rarPass = null; // null = フィルタ無し
     if (curRarities.size && rarityIndex[set.id]) {
