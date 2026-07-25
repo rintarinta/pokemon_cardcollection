@@ -149,6 +149,14 @@
   .modal h3 { font-size: 17px; margin-bottom: 6px; }
   .modal .meta { color: var(--muted); font-size: 13px; margin-bottom: 16px; }
   .modal .meta span { color: var(--gold); }
+  .imgreg { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); text-align: left; }
+  .imgreg-title { font-size: 12px; font-weight: 700; color: var(--muted); margin-bottom: 8px; }
+  .imgreg-input { width: 100%; background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; color: var(--text); font-size: 12px; font-family: inherit; margin-bottom: 8px; }
+  .imgreg-input:focus { outline: none; border-color: var(--accent); }
+  .imgreg-btns { display: flex; gap: 6px; margin-bottom: 8px; }
+  .imgreg-btns .btn { flex: 1; padding: 7px 6px; }
+  .imgreg-hint { font-size: 10.5px; color: #64748b; line-height: 1.5; }
+  .noimg small { font-size: 9px; opacity: .7; }
   .data-sec { background: var(--panel2); border: 1px solid var(--line); border-radius: 10px; padding: 14px; margin-bottom: 12px; }
   .data-title { font-size: 13px; font-weight: 700; margin-bottom: 10px; }
   .data-btns { display: flex; gap: 8px; margin-bottom: 8px; }
@@ -227,6 +235,14 @@ function saveOwned() { localStorage.setItem(STORE_KEY, JSON.stringify(owned)); r
 function isOwned(id) { return !!owned[id]; }
 function ownedCountForSet(setId) { const p = setId + '-'; let n = 0; for (const k in owned) if (k.startsWith(p)) n++; return n; }
 function refreshTotal() { document.getElementById('totalOwned').textContent = Object.keys(owned).length; }
+
+// ---- 手動登録画像（TCGdexに画像が無いカード用。cardId -> 画像URL or dataURL） ----
+const IMG_KEY = 'pokecard_images_v1';
+let customImg = loadImages();
+function loadImages() { try { return JSON.parse(localStorage.getItem(IMG_KEY)) || {}; } catch { return {}; } }
+function saveImages() { localStorage.setItem(IMG_KEY, JSON.stringify(customImg)); }
+function cardThumb(c) { return c.image ? c.image + '/low.png' : (customImg[c.id] || null); }
+function cardFull(c)  { return c.image ? c.image + '/high.png' : (customImg[c.id] || null); }
 
 // ---- pending（未保存の選択。保存済みと状態が異なるカードIDの集合） ----
 let pending = new Set();
@@ -427,9 +443,10 @@ function renderSet(set) {
       const isRm = isPend && owned[c.id]; // 保存済み所有を外そうとしている
       let cls = dOwned ? 'owned' : 'unowned';
       if (isPend) cls += isRm ? ' pending rm' : ' pending';
-      const img = c.image
-        ? `<img src="${c.image}/low.png" alt="${esc(c.name)}" loading="lazy" decoding="async" onerror="this.parentNode.innerHTML='<div class=\\'noimg\\'>${esc(c.name)}</div>'">`
-        : `<div class="noimg">${esc(c.name)}</div>`;
+      const src = cardThumb(c);
+      const img = src
+        ? `<img src="${src}" alt="${esc(c.name)}" loading="lazy" decoding="async" onerror="this.parentNode.innerHTML='<div class=\\'noimg\\'>${esc(c.name)}<br><small>画像なし</small></div>'">`
+        : `<div class="noimg">${esc(c.name)}<br><small>長押しで画像登録</small></div>`;
       return `<div class="poke ${cls}" data-id="${c.id}">
         ${img}
         <div class="num">${c.localId}</div>
@@ -486,16 +503,53 @@ async function openCard(id) {
     const r = await fetch(API + '/cards/' + id);
     const c = await r.json();
     const willOwn = displayOwned(id);
+    const full = cardFull(c);
+    const hasCustom = !c.image && !!customImg[id];
+    const imgHtml = full
+      ? `<img src="${full}" alt="" onerror="this.style.display='none'">`
+      : `<div class="noimg" style="height:180px;border-radius:10px;margin-bottom:14px">画像なし</div>`;
+    // TCGdexに画像が無いカードだけ、手動登録UIを出す
+    const regHtml = c.image ? '' : `
+      <div class="imgreg">
+        <div class="imgreg-title">画像を手動登録${hasCustom?'（登録済み）':''}</div>
+        <input id="imgUrl" class="imgreg-input" placeholder="画像URLを貼り付け（公式サイトの画像URL等）" value="${hasCustom&&/^https?:/.test(customImg[id])?esc(customImg[id]):''}">
+        <div class="imgreg-btns">
+          <button class="btn primary" id="imgSave">URLを登録</button>
+          <button class="btn" id="imgFileBtn">ファイルから</button>
+          ${hasCustom?'<button class="btn" id="imgDel">削除</button>':''}
+        </div>
+        <input type="file" id="imgFile" accept="image/*" style="display:none">
+        <div class="imgreg-hint">公式カード画像のURLをコピペするか、保存済み画像を選択できます。この端末に保存され、書出データにも含まれます。</div>
+      </div>`;
     body.innerHTML = `
-      ${c.image ? `<img src="${c.image}/high.png" alt="">` : ''}
+      ${imgHtml}
       <h3>${esc(c.name)}</h3>
       <div class="meta">No.${c.localId} ・ レアリティ <span>${esc(c.rarity||'不明')}</span><br>${esc((c.set&&c.set.name)||'')}</div>
-      <button class="btn primary" style="width:100%" id="mToggle">${willOwn?'✓ 選択中（タップで外す）':'選択に追加する'}</button>`;
+      <button class="btn primary" style="width:100%" id="mToggle">${willOwn?'✓ 選択中（タップで外す）':'選択に追加する'}</button>
+      ${regHtml}`;
     document.getElementById('mToggle').onclick = () => {
       togglePending(id);
       closeModal();
       if (window._redrawSet) window._redrawSet();
     };
+    if (!c.image) {
+      const refresh = () => { closeModal(); if (window._redrawSet) window._redrawSet(); };
+      document.getElementById('imgSave').onclick = () => {
+        const u = document.getElementById('imgUrl').value.trim();
+        if (!u) { alert('画像URLを入力してください。'); return; }
+        customImg[id] = u; saveImages(); toast('画像を登録しました'); refresh();
+      };
+      document.getElementById('imgFileBtn').onclick = () => document.getElementById('imgFile').click();
+      document.getElementById('imgFile').onchange = ev => {
+        const f = ev.target.files[0]; if (!f) return;
+        if (f.size > 1.5 * 1024 * 1024) { if (!confirm('画像が大きめです（保存容量を圧迫する場合があります）。続けますか？')) return; }
+        const rd = new FileReader();
+        rd.onload = () => { customImg[id] = rd.result; saveImages(); toast('画像を登録しました'); refresh(); };
+        rd.readAsDataURL(f);
+      };
+      const del = document.getElementById('imgDel');
+      if (del) del.onclick = () => { delete customImg[id]; saveImages(); toast('画像を削除しました'); refresh(); };
+    }
   } catch (e) {
     body.innerHTML = `<div class="empty">詳細を取得できませんでした。</div>`;
   }
@@ -519,7 +573,7 @@ function download(text, name, type) {
 
 // --- JSON ---
 function exportJSON() {
-  const data = { version: 1, exportedAt: (function(){ try { return new Date().toISOString(); } catch { return ''; } })(), owned };
+  const data = { version: 1, exportedAt: (function(){ try { return new Date().toISOString(); } catch { return ''; } })(), owned, images: customImg };
   download(JSON.stringify(data, null, 2), `pokecard_backup_${ts()}.json`, 'application/json');
   toast('JSONを書き出しました');
 }
@@ -527,10 +581,12 @@ function exportJSON() {
 // --- CSV（card_id,set_id,number,owned。人間が読めて復元しやすい形式） ---
 function csvCell(v) { v = String(v); return /[",\r\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; }
 function exportCSV() {
-  const rows = [['card_id','set_id','number','owned']];
-  Object.keys(owned).sort().forEach(id => {
+  const rows = [['card_id','set_id','number','owned','image_url']];
+  // 所有カード＋画像だけ登録したカードの両方を網羅
+  const ids = new Set([...Object.keys(owned), ...Object.keys(customImg)]);
+  [...ids].sort().forEach(id => {
     const m = id.match(/^(.*)-([^-]+)$/);
-    rows.push([id, m ? m[1] : '', m ? m[2] : '', '1']);
+    rows.push([id, m ? m[1] : '', m ? m[2] : '', owned[id] ? '1' : '0', customImg[id] || '']);
   });
   const csv = rows.map(r => r.map(csvCell).join(',')).join('\r\n');
   download('﻿' + csv, `pokecard_backup_${ts()}.csv`, 'text/csv;charset=utf-8');
@@ -558,10 +614,13 @@ function parseCSV(text) {
   return rows.filter(r => r.length && r.some(x => x !== ''));
 }
 
-function applyImport(incoming, label) {
+function applyImport(incoming, images, label) {
   if (!incoming || typeof incoming !== 'object') { alert('読み込めるデータではありませんでした。'); return; }
   const merge = confirm(`${label}を読み込みます。\n[OK]=いまのデータに統合（追加）\n[キャンセル]=丸ごと上書き`);
   owned = merge ? Object.assign({}, owned, incoming) : incoming;
+  if (images && Object.keys(images).length) customImg = merge ? Object.assign({}, customImg, images) : images;
+  else if (!merge) customImg = {};
+  saveImages();
   pending.clear(); updateSaveBar();
   saveOwned();
   closeData();
@@ -578,7 +637,7 @@ document.getElementById('importFileJson').addEventListener('change', e => {
       const inc = d.owned || d;
       const map = {};
       Object.keys(inc).forEach(k => { if (inc[k]) map[k] = 1; });
-      applyImport(map, 'JSON');
+      applyImport(map, d.images || {}, 'JSON');
     } catch { alert('読み込めるJSONではありませんでした。'); }
   };
   rd.readAsText(f); e.target.value = '';
@@ -593,18 +652,20 @@ document.getElementById('importFileCsv').addEventListener('change', e => {
       if (!rows.length) throw 0;
       // ヘッダ行から card_id / owned 列を特定（無ければ1列目をID扱い）
       const head = rows[0].map(h => h.trim().toLowerCase());
-      let idCol = head.indexOf('card_id'), ownCol = head.indexOf('owned');
-      let start = 1;
-      if (idCol === -1) { idCol = 0; ownCol = head.indexOf('owned'); start = /^[a-z_]+$/i.test(rows[0][0]) && head.includes('card_id') ? 1 : 0; }
-      const map = {};
+      const hasHeader = head.includes('card_id');
+      let idCol = head.indexOf('card_id'), ownCol = head.indexOf('owned'), imgCol = head.indexOf('image_url');
+      let start = hasHeader ? 1 : 0;
+      if (idCol === -1) idCol = 0;
+      const map = {}, imgs = {};
       for (let i = start; i < rows.length; i++) {
         const id = (rows[i][idCol] || '').trim();
         if (!id || id.toLowerCase() === 'card_id') continue;
         const ownVal = ownCol >= 0 ? String(rows[i][ownCol]).trim().toLowerCase() : '1';
         const isOwn = ownCol < 0 || ['1','true','yes','o','y','所有','◯','○','あり'].includes(ownVal);
         if (isOwn) map[id] = 1;
+        if (imgCol >= 0) { const u = (rows[i][imgCol] || '').trim(); if (u) imgs[id] = u; }
       }
-      applyImport(map, 'CSV');
+      applyImport(map, imgs, 'CSV');
     } catch { alert('読み込めるCSVではありませんでした。'); }
   };
   rd.readAsText(f); e.target.value = '';
