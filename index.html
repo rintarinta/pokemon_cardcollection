@@ -231,7 +231,11 @@ function loadOwned() {
   try { return JSON.parse(localStorage.getItem(STORE_KEY)) || {}; }
   catch { return {}; }
 }
-function saveOwned() { localStorage.setItem(STORE_KEY, JSON.stringify(owned)); refreshTotal(); }
+function saveOwned() {
+  try { localStorage.setItem(STORE_KEY, JSON.stringify(owned)); }
+  catch (e) { alert('保存に失敗しました（ブラウザの保存容量が上限の可能性）。\nデータ管理から書き出してバックアップしてください。'); }
+  refreshTotal();
+}
 function isOwned(id) { return !!owned[id]; }
 function ownedCountForSet(setId) { const p = setId + '-'; let n = 0; for (const k in owned) if (k.startsWith(p)) n++; return n; }
 function refreshTotal() { document.getElementById('totalOwned').textContent = Object.keys(owned).length; }
@@ -240,7 +244,10 @@ function refreshTotal() { document.getElementById('totalOwned').textContent = Ob
 const IMG_KEY = 'pokecard_images_v1';
 let customImg = loadImages();
 function loadImages() { try { return JSON.parse(localStorage.getItem(IMG_KEY)) || {}; } catch { return {}; } }
-function saveImages() { localStorage.setItem(IMG_KEY, JSON.stringify(customImg)); }
+function saveImages() {
+  try { localStorage.setItem(IMG_KEY, JSON.stringify(customImg)); }
+  catch (e) { alert('画像の保存に失敗しました（保存容量の上限の可能性）。\nファイル画像は容量が大きいため、URL登録の利用や不要画像の削除をおすすめします。'); }
+}
 function cardThumb(c) { return c.image ? c.image + '/low.png' : (customImg[c.id] || null); }
 function cardFull(c)  { return c.image ? c.image + '/high.png' : (customImg[c.id] || null); }
 
