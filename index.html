@@ -258,8 +258,9 @@ function saveImages() {
   try { localStorage.setItem(IMG_KEY, JSON.stringify(customImg)); }
   catch (e) { alert('画像の保存に失敗しました（保存容量の上限の可能性）。\nファイル画像は容量が大きいため、URL登録の利用や不要画像の削除をおすすめします。'); }
 }
-function cardThumb(c) { return c.image ? c.image + '/low.png' : (customImg[c.id] || null); }
-function cardFull(c)  { return c.image ? c.image + '/high.png' : (customImg[c.id] || null); }
+// WebPはPNGの約1/11で軽い（iOS14+/主要ブラウザ対応）。読込高速化のため採用
+function cardThumb(c) { return c.image ? c.image + '/low.webp' : (customImg[c.id] || null); }
+function cardFull(c)  { return c.image ? c.image + '/high.webp' : (customImg[c.id] || null); }
 
 // ---- pending（未保存の選択。保存済みと状態が異なるカードIDの集合） ----
 let pending = new Set();
@@ -331,6 +332,7 @@ const view = document.getElementById('view');
 function loading(msg) { view.innerHTML = `<div class="loading"><div class="spinner"></div>${msg||'読み込み中...'}</div>`; }
 
 async function goSets() {
+  renderedHash = '';
   location.hash = '';
   pending.clear(); updateSaveBar();
   loading('セット一覧を取得中...');
@@ -375,9 +377,11 @@ function renderSets(list) {
   });
 }
 
+let renderedHash = null; // 現在表示中のhash（戻る/進む検知用）
 let curOwnedFilter = 'all';
 let curRarities = new Set();
 async function goSet(id) {
+  renderedHash = id;
   location.hash = id;
   pending.clear(); updateSaveBar();
   loading('カードを取得中...');
@@ -475,25 +479,21 @@ function renderSet(set) {
     }).join('');
 
     grid.querySelectorAll('.poke').forEach(el => {
-      let pressTimer = null, longPress = false;
       const id = el.dataset.id;
-      // ⓘボタン：詳細・画像登録を開く（選択トグルはしない）
-      const info = el.querySelector('.info-btn');
-      if (info) {
-        info.addEventListener('click', e => { e.stopPropagation(); openCard(id); });
-        info.addEventListener('touchend', e => { e.stopPropagation(); }, {passive:true});
-      }
+      // カード本体タップ＝選択トグル
       el.addEventListener('click', () => {
-        if (longPress) { longPress = false; return; }
         togglePending(id);
         if (curOwnedFilter === 'all') updateCardEl(el, id);
         else drawCards();
       });
+      // ⓘボタン＝詳細・画像登録を開く（選択トグルはしない）
+      const info = el.querySelector('.info-btn');
+      if (info) {
+        const open = e => { e.stopPropagation(); e.preventDefault(); openCard(id); };
+        info.addEventListener('click', open);
+      }
+      // PC右クリックでも詳細
       el.addEventListener('contextmenu', e => { e.preventDefault(); openCard(id); });
-      // 長押しでも開ける（保険）。スクロール時はキャンセル
-      el.addEventListener('touchstart', () => { longPress = false; pressTimer = setTimeout(() => { longPress = true; openCard(id); }, 450); }, {passive:true});
-      el.addEventListener('touchmove', () => clearTimeout(pressTimer), {passive:true});
-      el.addEventListener('touchend', () => clearTimeout(pressTimer));
     });
   }
 
@@ -711,6 +711,13 @@ function toast(msg) {
   t.textContent = msg; t.classList.add('on');
   clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('on'), 1800);
 }
+
+// ---- 戻る/進む（ブラウザ履歴）対応：hash変化で画面を復元 ----
+window.addEventListener('hashchange', () => {
+  const h = location.hash.slice(1);
+  if (h === renderedHash) return; // 自分で設定した変化は無視
+  if (h) goSet(h); else goSets();
+});
 
 // ---- boot ----
 refreshTotal();
