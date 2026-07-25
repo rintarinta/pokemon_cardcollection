@@ -95,7 +95,17 @@
     position: relative; border-radius: 10px; overflow: hidden; cursor: pointer;
     background: var(--panel); border: 2px solid transparent; aspect-ratio: 63/88;
     transition: border-color .12s, transform .08s;
+    -webkit-touch-callout: none; -webkit-user-select: none; user-select: none;
   }
+  .poke .info-btn {
+    position: absolute; bottom: 5px; right: 5px; z-index: 3;
+    width: 30px; height: 30px; border-radius: 50%; border: none;
+    background: rgba(15,23,42,.82); color: #fff; font-size: 15px; font-weight: 700;
+    display: flex; align-items: center; justify-content: center; cursor: pointer;
+    line-height: 1;
+  }
+  .poke .info-btn:hover { background: var(--accent2); color: #012; }
+  .poke .info-btn:active { transform: scale(.9); }
   .poke:hover { transform: scale(1.03); }
   .poke img { width: 100%; height: 100%; object-fit: cover; display: block; transition: filter .15s, opacity .15s; }
   .poke.unowned img { filter: grayscale(1) brightness(.55); opacity: .8; }
@@ -453,28 +463,36 @@ function renderSet(set) {
       const src = cardThumb(c);
       const img = src
         ? `<img src="${src}" alt="${esc(c.name)}" loading="lazy" decoding="async" onerror="this.parentNode.innerHTML='<div class=\\'noimg\\'>${esc(c.name)}<br><small>画像なし</small></div>'">`
-        : `<div class="noimg">${esc(c.name)}<br><small>長押しで画像登録</small></div>`;
+        : `<div class="noimg">${esc(c.name)}<br><small>ⓘから画像登録</small></div>`;
       return `<div class="poke ${cls}" data-id="${c.id}">
         ${img}
         <div class="num">${c.localId}</div>
         <div class="check">✓</div>
         <div class="flag">${isRm ? '削除予定' : '追加予定'}</div>
         <div class="nm">${esc(c.name)}</div>
+        <button class="info-btn" data-info="${c.id}" title="詳細・画像登録">ⓘ</button>
       </div>`;
     }).join('');
 
     grid.querySelectorAll('.poke').forEach(el => {
       let pressTimer = null, longPress = false;
       const id = el.dataset.id;
+      // ⓘボタン：詳細・画像登録を開く（選択トグルはしない）
+      const info = el.querySelector('.info-btn');
+      if (info) {
+        info.addEventListener('click', e => { e.stopPropagation(); openCard(id); });
+        info.addEventListener('touchend', e => { e.stopPropagation(); }, {passive:true});
+      }
       el.addEventListener('click', () => {
         if (longPress) { longPress = false; return; }
         togglePending(id);
-        // 当該カードだけ見た目更新（フィルタで消える場合は全体再描画）
         if (curOwnedFilter === 'all') updateCardEl(el, id);
         else drawCards();
       });
       el.addEventListener('contextmenu', e => { e.preventDefault(); openCard(id); });
-      el.addEventListener('touchstart', () => { pressTimer = setTimeout(() => { longPress = true; openCard(id); }, 500); }, {passive:true});
+      // 長押しでも開ける（保険）。スクロール時はキャンセル
+      el.addEventListener('touchstart', () => { longPress = false; pressTimer = setTimeout(() => { longPress = true; openCard(id); }, 450); }, {passive:true});
+      el.addEventListener('touchmove', () => clearTimeout(pressTimer), {passive:true});
       el.addEventListener('touchend', () => clearTimeout(pressTimer));
     });
   }
