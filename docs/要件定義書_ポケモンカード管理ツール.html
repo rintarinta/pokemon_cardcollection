@@ -1,0 +1,546 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>要件定義書 — ポケモンカード管理ツール</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700&display=swap');
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'Noto Sans JP', 'Hiragino Sans', 'Yu Gothic UI', 'Meiryo', sans-serif;
+    font-size: 14px;
+    line-height: 1.8;
+    color: #1a1a1a;
+    background: #f0f2f5;
+  }
+
+  /* ---- Layout ---- */
+  .page-layout { display: flex; min-height: 100vh; }
+
+  /* ---- Sidebar ---- */
+  .sidebar {
+    width: 220px; flex-shrink: 0; position: sticky; top: 0; height: 100vh;
+    overflow-y: auto; background: #115E59; color: #fff; display: flex; flex-direction: column;
+  }
+  .sidebar-logo { padding: 18px 20px 14px; border-bottom: 1px solid rgba(255,255,255,0.12); }
+  .sidebar-logo .logo-label { font-size: 10px; opacity: 0.55; letter-spacing: 0.1em; text-transform: uppercase; margin-bottom: 6px; }
+  .sidebar-logo .logo-title { font-size: 12.5px; font-weight: 700; line-height: 1.5; }
+  .sidebar-logo .logo-ver { font-size: 10.5px; opacity: 0.55; margin-top: 6px; }
+  .sidebar-nav { padding: 10px 0 16px; flex-shrink: 0; }
+  .sidebar-nav-label { font-size: 9.5px; letter-spacing: 0.12em; text-transform: uppercase; opacity: 0.45; padding: 0 20px 8px; }
+  .sidebar-nav a {
+    display: flex; align-items: center; gap: 10px; padding: 6px 20px; font-size: 12px;
+    color: rgba(255,255,255,0.72); text-decoration: none; transition: background .12s, color .12s;
+    border-left: 3px solid transparent;
+  }
+  .sidebar-nav a:hover { background: rgba(255,255,255,0.08); color: #fff; }
+  .sidebar-nav a.active { background: rgba(255,255,255,0.12); color: #fff; border-left-color: #2DD4BF; font-weight: 600; }
+  .sidebar-nav a .nav-num {
+    display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px;
+    background: rgba(255,255,255,0.15); border-radius: 50%; font-size: 10.5px; font-weight: 700; flex-shrink: 0;
+  }
+  .sidebar-nav a.active .nav-num { background: #2DD4BF; color: #115E59; }
+
+  /* ---- Main ---- */
+  .main-content { flex: 1; min-width: 0; padding: 0 0 60px; }
+
+  /* Document Header */
+  .doc-header { background: #0D9488; color: #ffffff; padding: 40px 52px 32px; border-bottom: 4px solid #0F766E; }
+  .doc-header .doc-label { font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; opacity: 0.75; margin-bottom: 10px; }
+  .doc-header h1 { font-size: 22px; font-weight: 700; line-height: 1.4; margin-bottom: 28px; letter-spacing: 0.02em; }
+  .doc-meta-grid { display: flex; flex-wrap: wrap; gap: 0; background: rgba(255,255,255,0.12); border-radius: 4px; overflow: hidden; width: fit-content; }
+  .doc-meta-item { padding: 10px 24px; border-right: 1px solid rgba(255,255,255,0.2); }
+  .doc-meta-item:last-child { border-right: none; }
+  .doc-meta-item .label { font-size: 10px; opacity: 0.7; letter-spacing: 0.08em; display: block; margin-bottom: 2px; }
+  .doc-meta-item .value { font-size: 13px; font-weight: 500; }
+  .status-badge { display: inline-block; background: #fbbf24; color: #78350f; font-size: 11px; font-weight: 700; padding: 2px 10px; border-radius: 20px; letter-spacing: 0.05em; }
+
+  /* Body */
+  .doc-body { padding: 48px 52px; }
+
+  /* Sections */
+  .section { margin-bottom: 52px; }
+  .section:last-child { margin-bottom: 0; }
+  h2.section-title {
+    font-size: 17px; font-weight: 700; color: #115E59; border-bottom: 2px solid #0D9488;
+    padding-bottom: 10px; margin-bottom: 24px; letter-spacing: 0.02em; scroll-margin-top: 24px;
+  }
+  h2.section-title .section-num {
+    display: inline-flex; align-items: center; justify-content: center; background: #0D9488; color: #fff;
+    font-size: 13px; font-weight: 700; width: 26px; height: 26px; border-radius: 50%;
+    margin-right: 10px; vertical-align: middle; position: relative; top: -1px;
+  }
+  h3.subsection-title { font-size: 14px; font-weight: 700; color: #115E59; margin: 20px 0 12px; }
+  p.section-desc { color: #374151; margin-bottom: 16px; line-height: 1.9; }
+
+  /* Info Table */
+  .info-table { width: 100%; border-collapse: collapse; font-size: 13px; margin-bottom: 8px; border: 1px solid #cbd5e1; border-radius: 6px; overflow: hidden; }
+  .info-table tr { border-bottom: 1px solid #cbd5e1; }
+  .info-table tr:last-child { border-bottom: none; }
+  .info-table th { width: 180px; background: #e8eef8; padding: 11px 16px; text-align: left; font-weight: 700; color: #334155; white-space: nowrap; border-right: 2px solid #bfcde8; }
+  .info-table td { padding: 11px 16px; color: #1a1a1a; background: #fff; }
+
+  /* Data Table */
+  table.data-table { width: 100%; border-collapse: collapse; font-size: 13px; margin-bottom: 8px; }
+  table.data-table thead tr { background: #115E59; color: #ffffff; }
+  table.data-table thead th { padding: 10px 14px; text-align: left; font-weight: 600; font-size: 12px; letter-spacing: 0.04em; white-space: nowrap; }
+  table.data-table tbody tr { border-bottom: 1px solid #e5e7eb; }
+  table.data-table tbody tr:nth-child(odd) { background: #f8faff; }
+  table.data-table tbody tr:nth-child(even) { background: #ffffff; }
+  table.data-table tbody tr:hover { background: #eff6ff; }
+  table.data-table td { padding: 10px 14px; color: #374151; vertical-align: top; line-height: 1.7; }
+
+  /* Func Table */
+  .func-table { width:100%; border-collapse:collapse; font-size:13px; margin-bottom:8px; }
+  .func-table th { background:#F8FAFC; font-weight:700; color:#475569; padding:8px 12px; border:1px solid #E5E7EB; text-align:left; }
+  .func-table td { padding:8px 12px; border:1px solid #E5E7EB; color:#374151; vertical-align:top; line-height:1.6; }
+  .func-table tr:nth-child(even) td { background:#FAFAFA; }
+
+  /* Chips */
+  .chip { display: inline-block; font-size: 11px; font-weight: 600; padding: 2px 9px; border-radius: 20px; margin: 1px 2px; white-space: nowrap; }
+  .chip-blue { background: #dbeafe; color: #1e40af; }
+  .chip-green { background: #d1fae5; color: #065f46; }
+  .chip-purple { background: #ede9fe; color: #4c1d95; }
+  .chip-amber { background: #fef3c7; color: #92400e; }
+
+  /* Note box */
+  .note-box { background: #fffbeb; border: 1px solid #fde68a; border-left: 4px solid #f59e0b; border-radius: 0 4px 4px 0; padding: 14px 18px; margin-top: 20px; font-size: 12.5px; color: #78350f; line-height: 1.7; }
+  .note-box strong { display: block; margin-bottom: 4px; font-size: 12px; letter-spacing: 0.05em; text-transform: uppercase; color: #b45309; }
+
+  /* Screenshot section */
+  .scr-section { margin-bottom: 44px; padding-bottom: 44px; border-bottom: 1px dashed #e5e7eb; }
+  .scr-section:last-child { border-bottom: none; margin-bottom: 0; }
+  .scr-header { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
+  .scr-id { font-size: 11px; font-weight: 700; background: #e0e7ff; color: #3730a3; padding: 3px 10px; border-radius: 4px; }
+  .scr-name { font-size: 15px; font-weight: 700; color: #115E59; }
+  .scr-desc { font-size: 13px; color: #374151; margin-bottom: 14px; line-height: 1.8; }
+  .scr-components { font-size: 12px; color: #6b7280; margin-bottom: 16px; }
+  .scr-components strong { color: #374151; }
+  .scr-img { width: 100%; border: 1px solid #e5e7eb; border-radius: 8px; }
+  .scr-img-placeholder {
+    width: 100%; height: 220px; background: #f8faff; border: 2px dashed #bfdbfe; border-radius: 8px;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; color: #93c5fd; gap: 8px;
+  }
+  .scr-img-placeholder svg { width: 36px; height: 36px; opacity: .5; }
+  .scr-img-placeholder span { font-size: 12px; color: #9ca3af; }
+
+  /* Phase blocks */
+  .phase-block { border-radius:8px; padding:16px 20px; margin-bottom:16px; }
+  .phase-block.phase-1 { background:#EFF6FF; border:1px solid #BFDBFE; }
+  .phase-block.phase-2 { background:#F5F3FF; border:1px solid #DDD6FE; }
+  .phase-block.phase-3 { background:#FDF2F8; border:1px solid #FBCFE8; }
+  .phase-header { display:flex; align-items:center; gap:10px; margin-bottom:10px; }
+  .phase-label { font-size:11px; font-weight:800; letter-spacing:.06em; padding:2px 8px; border-radius:4px; }
+  .phase-1 .phase-label { background:#1D4ED8; color:#fff; }
+  .phase-2 .phase-label { background:#7C3AED; color:#fff; }
+  .phase-3 .phase-label { background:#DB2777; color:#fff; }
+  .phase-name { font-size:13px; font-weight:700; color:#1e293b; }
+  .feature-list { margin:0; padding-left:18px; }
+  .feature-list li { font-size:13px; color:#374151; margin-bottom:4px; line-height:1.6; }
+
+  /* KPI */
+  .kpi-grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:8px; }
+  .kpi-card { background:#F8FAFC; border:1px solid #E5E7EB; border-radius:8px; padding:14px 16px; font-size:13px; color:#374151; line-height:1.7; }
+  .kpi-phase { font-size:11px; font-weight:800; color:#64748B; letter-spacing:.06em; text-transform:uppercase; margin-bottom:6px; }
+  @media(max-width:600px){ .kpi-grid{ grid-template-columns:1fr; } }
+
+  /* Footer */
+  .doc-footer { background: #f8faff; border-top: 1px solid #e5e7eb; padding: 20px 52px; display: flex; justify-content: space-between; align-items: center; font-size: 11.5px; color: #9ca3af; }
+  .doc-footer .left { line-height: 1.6; }
+  .doc-footer .right { text-align: right; line-height: 1.6; }
+
+  /* Print */
+  @media print {
+    .sidebar { display: none !important; }
+    body { background: #fff; }
+    .doc-header { -webkit-print-color-adjust: exact; print-color-adjust: exact; padding: 28px 36px 22px; }
+    .doc-body { padding: 32px 36px; }
+    .section { page-break-inside: avoid; margin-bottom: 32px; }
+    table.data-table thead tr { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    table.data-table tbody tr:nth-child(odd) { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .doc-footer { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    h2.section-title { page-break-after: avoid; }
+    .scr-img-placeholder { height: 160px; }
+  }
+</style>
+</head>
+<body>
+<div class="page-layout">
+
+  <!-- Sidebar Nav -->
+  <nav class="sidebar" id="sidebar">
+    <div class="sidebar-logo">
+      <div class="logo-label">Requirements Doc</div>
+      <div class="logo-title">ポケモンカード管理ツール<br>要件定義書</div>
+      <div class="logo-ver">Ver.0.2</div>
+    </div>
+    <div class="sidebar-nav">
+      <div class="sidebar-nav-label">目次</div>
+      <a href="#sec1" class="nav-link"><span class="nav-num">1</span>ドキュメント情報</a>
+      <a href="#sec2" class="nav-link"><span class="nav-num">2</span>背景・目的</a>
+      <a href="#sec3" class="nav-link"><span class="nav-num">3</span>システム概要・構成</a>
+      <a href="#sec4" class="nav-link"><span class="nav-num">4</span>機能一覧</a>
+      <a href="#sec5" class="nav-link"><span class="nav-num">5</span>画面一覧</a>
+      <a href="#sec6" class="nav-link"><span class="nav-num">6</span>データ項目</a>
+      <a href="#sec7" class="nav-link"><span class="nav-num">7</span>外部データ源</a>
+      <a href="#sec8" class="nav-link"><span class="nav-num">8</span>開発フェーズ</a>
+      <a href="#sec9" class="nav-link"><span class="nav-num">9</span>仮定・意思決定ログ</a>
+      <a href="#sec10" class="nav-link"><span class="nav-num">10</span>用語集</a>
+    </div>
+  </nav>
+
+  <!-- Main -->
+  <div class="main-content">
+
+    <!-- Header -->
+    <div class="doc-header">
+      <div class="doc-label">Requirements Document / 要件定義書</div>
+      <h1>ポケモンカード管理ツール<br>要件定義書</h1>
+      <div class="doc-meta-grid">
+        <div class="doc-meta-item">
+          <span class="label">バージョン</span>
+          <span class="value">0.2</span>
+        </div>
+        <div class="doc-meta-item">
+          <span class="label">作成日</span>
+          <span class="value">2026-07-25</span>
+        </div>
+        <div class="doc-meta-item">
+          <span class="label">最終更新</span>
+          <span class="value">2026-07-25</span>
+        </div>
+        <div class="doc-meta-item">
+          <span class="label">ステータス</span>
+          <span class="value"><span class="status-badge">ドラフト</span></span>
+        </div>
+      </div>
+    </div>
+
+    <div class="doc-body">
+
+      <!-- 1: ドキュメント情報 -->
+      <div class="section" id="sec1">
+        <h2 class="section-title"><span class="section-num">1</span>ドキュメント情報</h2>
+        <table class="info-table">
+          <tbody>
+            <tr><th>文書名</th><td>ポケモンカード管理ツール 要件定義書</td></tr>
+            <tr><th>目的</th><td>個人のポケモンカードコレクションを、セット単位で「持っている／持っていない」を管理するツールの要件を整理し、開発着手前の合意形成を行う。</td></tr>
+            <tr><th>対象読者</th><td>開発担当（本人）</td></tr>
+            <tr><th>実運用者</th><td>本人以外の担当者。使う人ごとに自分の端末で自分のコレクションを独立管理する（データは他者と共有しない・ログイン不要）。</td></tr>
+            <tr><th>関連資料</th><td>TCGdex API（<a href="https://tcgdex.dev/">https://tcgdex.dev/</a>）</td></tr>
+            <tr><th>前提</th><td>無料の範囲で完結すること。サーバー費用・API利用料をかけない。</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- 2: 背景・目的 -->
+      <div class="section" id="sec2">
+        <h2 class="section-title"><span class="section-num">2</span>背景・目的</h2>
+        <p class="section-desc">
+          手持ちのポケモンカードが増え、「どのカードを持っていて、どれが未所持か」を把握しづらくなっている。
+          パックを買う際やコレクションを整理する際に、セットごとの収集状況をひと目で確認できる手段が欲しい。
+        </p>
+        <p class="section-desc">
+          そこで、カード図鑑のように<strong>セット単位でカードを一覧し、所有／未所有を塗り分けて管理</strong>できるツールを作成する。
+          相場の追跡や売買管理は行わず、「コレクションのコンプ状況の見える化」に目的を絞る。
+        </p>
+        <h3 class="subsection-title">達成したいこと</h3>
+        <table class="func-table">
+          <thead><tr><th style="width:200px">ゴール</th><th>説明</th></tr></thead>
+          <tbody>
+            <tr><td>収集状況の見える化</td><td>セットごとに「何枚中何枚所持」のコンプ率が分かる。</td></tr>
+            <tr><td>登録の手軽さ</td><td>カード名や型番を手入力せず、カード画像を見ながらタップで所有登録できる。</td></tr>
+            <tr><td>コストゼロ運用</td><td>無料APIとブラウザ内保存で、月額費用なしで動かせる。</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- 3: システム概要・構成 -->
+      <div class="section" id="sec3">
+        <h2 class="section-title"><span class="section-num">3</span>システム概要・構成</h2>
+        <p class="section-desc">
+          サーバーやデータベースを自前で構築せず、<strong>ブラウザだけで完結するWebアプリ</strong>として作る。
+          カードのマスタ情報（セット・カード名・番号・レアリティ・画像）は外部の無料API（TCGdex）を都度参照し、
+          「どのカードを所有しているか」という自分のデータだけをブラウザ内に保存する。
+        </p>
+        <table class="data-table">
+          <thead><tr><th style="width:170px">構成要素</th><th>採用方針</th></tr></thead>
+          <tbody>
+            <tr><td><span class="chip chip-green">形態</span></td><td>PC優先のWebアプリ。スマホでも閲覧できるようレスポンシブ対応。</td></tr>
+            <tr><td><span class="chip chip-green">カードマスタ</span></td><td>TCGdex API（日本語）を都度参照。カードDBは自前で持たない。</td></tr>
+            <tr><td><span class="chip chip-green">所有データの保存</span></td><td>ブラウザ内のローカル保存（IndexedDB / localStorage）。ログイン不要。</td></tr>
+            <tr><td><span class="chip chip-green">バックアップ / 端末移動</span></td><td>JSONファイルで書き出し・読み込み。手動で別端末へ移せる。</td></tr>
+            <tr><td><span class="chip chip-green">技術想定</span></td><td>フロントエンド完結（React もしくは 素のHTML/JS）。サーバー費用ゼロ。</td></tr>
+            <tr><td><span class="chip chip-green">配布方法</span></td><td>無料の静的ホスティング（GitHub Pages / Netlify / Cloudflare Pages 等）にURL公開し、実運用者にはリンクを渡す。ZIP配布も可能だが、実運用ではURL公開を推奨。</td></tr>
+          </tbody>
+        </table>
+
+        <h3 class="subsection-title">実運用者への配布</h3>
+        <p class="section-desc">本ツールは本人以外の担当者が実運用する。使う人ごとにデータは独立するため、同じアプリを複数人に配っても互いのコレクションは混ざらない。配布方法は次の2通り。</p>
+        <table class="func-table">
+          <thead><tr><th style="width:130px">方法</th><th>相手の手間</th><th>備考</th></tr></thead>
+          <tbody>
+            <tr><td>URL公開<span class="chip chip-green">推奨</span></td><td>リンクを開くだけ。スマホでも可。</td><td>更新は差し替えるだけで全員に反映。実運用向き。</td></tr>
+            <tr><td>ZIP配布</td><td>解凍してローカルで開く／簡易サーバー起動。</td><td>環境により <code>file://</code> でAPI通信・画像読込が動かない場合があり、サポートが煩雑。技術がわかる人向け。</td></tr>
+          </tbody>
+        </table>
+
+        <div class="note-box">
+          <strong>Note — ローカル保存の性質</strong>
+          所有データはブラウザ内に保存されるため、ブラウザのデータ消去や別端末では引き継がれない。
+          この弱点は「JSONエクスポート／インポート」で補う。まずはPC1台での利用を主とし、スマホは閲覧・軽い登録に使う想定。
+        </div>
+      </div>
+
+      <!-- 4: 機能一覧 -->
+      <div class="section" id="sec4">
+        <h2 class="section-title"><span class="section-num">4</span>機能一覧</h2>
+        <p class="section-desc">初期リリースで実装する機能を示す。所有の管理は「持っている／持っていない」の2状態のみとし、所有枚数のカウントは行わない。</p>
+        <table class="func-table">
+          <thead><tr><th style="width:70px">ID</th><th style="width:160px">機能</th><th>説明</th><th style="width:80px">優先度</th></tr></thead>
+          <tbody>
+            <tr><td>F-01</td><td>セット一覧</td><td>TCGdexの日本語セット（約177セット）を一覧表示。各セットの総枚数と所有コンプ率（例: 45/103）を表示する。</td><td><span class="chip chip-blue">必須</span></td></tr>
+            <tr><td>F-02</td><td>セット詳細（図鑑ビュー）</td><td>選んだセットのカードを番号順にグリッド表示。各カードは画像＋番号＋レアリティを表示し、タップ／クリックで所有をトグルする（所有＝カラー、未所有＝グレーアウト）。</td><td><span class="chip chip-blue">必須</span></td></tr>
+            <tr><td>F-03</td><td>カード名検索</td><td>カード名で横断的に検索し、ヒットしたカードから所有登録できる。</td><td><span class="chip chip-blue">必須</span></td></tr>
+            <tr><td>F-04</td><td>コレクション集計</td><td>総所有枚数、セット別コンプ率、レアリティ別の内訳を表示する。</td><td><span class="chip chip-amber">推奨</span></td></tr>
+            <tr><td>F-05</td><td>データのエクスポート／インポート</td><td>所有データをJSONで書き出し・読み込み。バックアップおよびPC⇄スマホのデータ移動に使う。</td><td><span class="chip chip-blue">必須</span></td></tr>
+            <tr><td>F-06</td><td>絞り込み表示</td><td>図鑑ビューで「未所有のみ」「所有のみ」を切り替え表示する。</td><td><span class="chip chip-amber">推奨</span></td></tr>
+          </tbody>
+        </table>
+
+        <h3 class="subsection-title">対象外（今回は作らない）</h3>
+        <table class="func-table">
+          <thead><tr><th style="width:200px">項目</th><th>理由</th></tr></thead>
+          <tbody>
+            <tr><td>資産価値・相場の追跡</td><td>相場データのAPIは有料または不安定なため、目的（収集の見える化）から外す。</td></tr>
+            <tr><td>所有枚数のカウント</td><td>「持っている／持っていない」で足りるため。管理をシンプルに保つ。</td></tr>
+            <tr><td>複数ユーザー・ログイン</td><td>個人利用のため不要。</td></tr>
+            <tr><td>デッキ構築・売買管理</td><td>本ツールのスコープ外。</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- 5: 画面一覧 -->
+      <div class="section" id="sec5">
+        <h2 class="section-title"><span class="section-num">5</span>画面一覧</h2>
+        <p class="section-desc">主要画面を示す。デザインは後続工程で確定する。</p>
+
+        <div class="scr-section">
+          <div class="scr-header">
+            <span class="scr-id">SCR-01</span>
+            <span class="scr-name">セット一覧</span>
+            <span><span class="chip chip-blue">F-01</span></span>
+          </div>
+          <p class="scr-desc">日本語セットをカード状に並べ、各セットの名称・記号・総枚数・コンプ率を表示する。タップでセット詳細へ遷移。</p>
+          <div class="scr-components"><strong>主な構成:</strong> セットカード（セット画像・名称・コンプ率バー）、検索欄への導線、コレクション集計への導線</div>
+          <div class="scr-img-placeholder">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>
+            <span>キャプチャ予定</span>
+          </div>
+        </div>
+
+        <div class="scr-section">
+          <div class="scr-header">
+            <span class="scr-id">SCR-02</span>
+            <span class="scr-name">セット詳細（図鑑ビュー）</span>
+            <span><span class="chip chip-blue">F-02</span><span class="chip chip-amber">F-06</span></span>
+          </div>
+          <p class="scr-desc">セット内のカードを番号順にグリッド表示。所有カードはカラー、未所有はグレーアウト。カードをタップして所有状態をトグルする。</p>
+          <div class="scr-components"><strong>主な構成:</strong> カードグリッド（画像・番号・レアリティ）、所有トグル、コンプ率ヘッダー、絞り込み（未所有のみ／所有のみ）</div>
+          <div class="scr-img-placeholder">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>
+            <span>キャプチャ予定</span>
+          </div>
+        </div>
+
+        <div class="scr-section">
+          <div class="scr-header">
+            <span class="scr-id">SCR-03</span>
+            <span class="scr-name">カード名検索</span>
+            <span><span class="chip chip-blue">F-03</span></span>
+          </div>
+          <p class="scr-desc">カード名でセットをまたいで検索し、結果一覧から所有登録できる。</p>
+          <div class="scr-components"><strong>主な構成:</strong> 検索入力欄、検索結果グリッド（画像・カード名・所属セット・所有トグル）</div>
+          <div class="scr-img-placeholder">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>
+            <span>キャプチャ予定</span>
+          </div>
+        </div>
+
+        <div class="scr-section">
+          <div class="scr-header">
+            <span class="scr-id">SCR-04</span>
+            <span class="scr-name">コレクション集計・データ管理</span>
+            <span><span class="chip chip-amber">F-04</span><span class="chip chip-blue">F-05</span></span>
+          </div>
+          <p class="scr-desc">総所有枚数・セット別コンプ率・レアリティ別内訳を表示。あわせてJSONのエクスポート／インポートを行う。</p>
+          <div class="scr-components"><strong>主な構成:</strong> サマリー数値、セット別進捗リスト、レアリティ別内訳、エクスポート／インポートボタン</div>
+          <div class="scr-img-placeholder">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>
+            <span>キャプチャ予定</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 6: データ項目 -->
+      <div class="section" id="sec6">
+        <h2 class="section-title"><span class="section-num">6</span>データ項目</h2>
+
+        <h3 class="subsection-title">カードマスタ（TCGdexから取得・保存しない）</h3>
+        <p class="section-desc">以下はAPIから都度取得する参照情報。自分では保持しない。</p>
+        <table class="func-table">
+          <thead><tr><th style="width:150px">項目</th><th>説明</th><th style="width:160px">TCGdexフィールド例</th></tr></thead>
+          <tbody>
+            <tr><td>カードID</td><td>カードの一意ID（セット記号＋番号）</td><td>SV1a-001</td></tr>
+            <tr><td>カード名</td><td>日本語カード名</td><td>name（トロピウス）</td></tr>
+            <tr><td>番号</td><td>セット内の番号</td><td>localId（001）</td></tr>
+            <tr><td>レアリティ</td><td>レアリティ</td><td>rarity（Common）</td></tr>
+            <tr><td>セット名</td><td>所属セット名</td><td>set.name（トリプレットビート）</td></tr>
+            <tr><td>画像</td><td>カード画像URL（高解像度PNG）</td><td>image + /high.png</td></tr>
+          </tbody>
+        </table>
+
+        <h3 class="subsection-title">所有データ（ブラウザ内に保存）</h3>
+        <p class="section-desc">実際に自分で保持するのは、下記のシンプルな所有情報のみ。</p>
+        <table class="func-table">
+          <thead><tr><th style="width:150px">項目</th><th>説明</th></tr></thead>
+          <tbody>
+            <tr><td>カードID</td><td>所有しているカードのID（TCGdexのカードIDと一致）</td></tr>
+            <tr><td>所有フラグ</td><td>持っている＝true。未所有のカードは保存しない（=falseと同義）。</td></tr>
+          </tbody>
+        </table>
+        <div class="note-box">
+          <strong>Note — データ構造の考え方</strong>
+          所有データは「所有しているカードIDの集合」として保持すれば十分。所有枚数・状態・購入情報は今回のスコープ外。
+          将来これらを足す場合も、カードIDをキーに項目を追加する形で拡張できる。
+        </div>
+      </div>
+
+      <!-- 7: 外部データ源 -->
+      <div class="section" id="sec7">
+        <h2 class="section-title"><span class="section-num">7</span>外部データ源（TCGdex API）</h2>
+        <p class="section-desc">カードマスタは TCGdex の無料APIを利用する。事前検証で、必要な項目が日本語・無料・APIキー不要で取得できることを確認済み。</p>
+        <table class="data-table">
+          <thead><tr><th style="width:170px">確認項目</th><th>結果</th></tr></thead>
+          <tbody>
+            <tr><td>提供元</td><td>TCGdex（<a href="https://tcgdex.dev/">tcgdex.dev</a>） / エンドポイント api.tcgdex.net</td></tr>
+            <tr><td>料金 / 認証</td><td>無料・APIキー不要</td></tr>
+            <tr><td>日本語セット数</td><td>約177セット（最新のメガシリーズまで対応）</td></tr>
+            <tr><td>取得できる項目</td><td>カード名・番号・レアリティ・セット名・カード画像（高解像度PNG）</td></tr>
+            <tr><td>画像</td><td>image URL に /high.png を付与して取得（HTTP 200 確認済み）</td></tr>
+          </tbody>
+        </table>
+        <div class="note-box">
+          <strong>Note — 外部依存のリスク</strong>
+          カードマスタを外部APIに依存するため、API側の仕様変更・停止時は影響を受ける。所有データ自体はローカルに残るため失われないが、
+          対策として「一度取得したセット／カード情報をブラウザにキャッシュする」ことを検討する。
+        </div>
+      </div>
+
+      <!-- 8: 開発フェーズ -->
+      <div class="section" id="sec8">
+        <h2 class="section-title"><span class="section-num">8</span>開発フェーズ</h2>
+        <p class="section-desc">小さく動くものから作り、段階的に広げる。</p>
+
+        <div class="phase-block phase-1">
+          <div class="phase-header"><span class="phase-label">PHASE 1</span><span class="phase-name">コア（図鑑＋所有管理）</span></div>
+          <ul class="feature-list">
+            <li>TCGdexからセット一覧・カード一覧を取得して表示（F-01, F-02）</li>
+            <li>カードのタップで所有トグル → ブラウザ内に保存</li>
+            <li>セットごとのコンプ率表示</li>
+          </ul>
+        </div>
+
+        <div class="phase-block phase-2">
+          <div class="phase-header"><span class="phase-label">PHASE 2</span><span class="phase-name">検索・集計・データ管理</span></div>
+          <ul class="feature-list">
+            <li>カード名検索（F-03）</li>
+            <li>コレクション集計・レアリティ別内訳（F-04）</li>
+            <li>JSONエクスポート／インポート（F-05）、絞り込み表示（F-06）</li>
+          </ul>
+        </div>
+
+        <div class="phase-block phase-3">
+          <div class="phase-header"><span class="phase-label">PHASE 3</span><span class="phase-name">改善（任意）</span></div>
+          <ul class="feature-list">
+            <li>取得データのキャッシュ（オフライン閲覧・API依存の緩和）</li>
+            <li>スマホUIの最適化</li>
+            <li>将来的な拡張（所有枚数・状態など）の検討</li>
+          </ul>
+        </div>
+
+        <div class="kpi-grid">
+          <div class="kpi-card"><div class="kpi-phase">Phase 1 完了基準</div>好きなセットを開き、カードをタップして所有登録でき、コンプ率が表示される。再読み込み後も所有状態が残る。</div>
+          <div class="kpi-card"><div class="kpi-phase">Phase 2 完了基準</div>カード名で検索して登録でき、全体の集計が見られ、JSONでバックアップ・復元できる。</div>
+        </div>
+      </div>
+
+      <!-- 9: 仮定・意思決定ログ -->
+      <div class="section" id="sec9">
+        <h2 class="section-title"><span class="section-num">9</span>設計上の仮定・意思決定ログ</h2>
+        <table class="func-table">
+          <thead><tr><th style="width:220px">項目</th><th>内容</th></tr></thead>
+          <tbody>
+            <tr><td>対象言語</td><td>日本語カードを中心とする。</td></tr>
+            <tr><td>管理単位</td><td>「持っている／持っていない」の2状態のみ。所有枚数はカウントしない。</td></tr>
+            <tr><td>データ保存</td><td>まずはブラウザ内ローカル保存で開始。同期はJSONエクスポート／インポートで代替。</td></tr>
+            <tr><td>利用端末</td><td>PCを優先。スマホは閲覧・軽い登録に対応。</td></tr>
+            <tr><td>実運用者・配布</td><td>本人以外が実運用。無料の静的ホスティングにURL公開して配布（ZIPも可）。使う人ごとにデータは独立し、他者とは共有しない。</td></tr>
+            <tr><td>カードマスタ</td><td>手入力マスタは作らず、TCGdex APIを都度参照する（無料で取得可能なことを検証済み）。</td></tr>
+          </tbody>
+        </table>
+        <div class="note-box">
+          <strong>今後の検討事項</strong>
+          ・端末間でリアルタイムに同期したくなった場合のクラウド保存の要否<br>
+          ・TCGdexで対象カードが見つからない場合の手動追加の要否<br>
+          ・レアリティ表記（英語）を日本語ラベルに変換するかどうか
+        </div>
+      </div>
+
+      <!-- 10: 用語集 -->
+      <div class="section" id="sec10">
+        <h2 class="section-title"><span class="section-num">10</span>用語集</h2>
+        <table class="func-table">
+          <thead><tr><th style="width:180px">用語</th><th>意味</th></tr></thead>
+          <tbody>
+            <tr><td>セット</td><td>拡張パックなどの発売単位。カードは各セットに属する。</td></tr>
+            <tr><td>図鑑ビュー</td><td>セット内のカードを番号順に並べ、所有／未所有を塗り分けて表示する画面。</td></tr>
+            <tr><td>コンプ率</td><td>そのセットの総枚数に対し、所有しているカードの割合（例: 45/103）。</td></tr>
+            <tr><td>TCGdex</td><td>ポケモンカードのマスタ情報を提供する無料の多言語API。本ツールのカードデータ源。</td></tr>
+            <tr><td>IndexedDB / localStorage</td><td>ブラウザ内にデータを保存する仕組み。所有データの保存先。</td></tr>
+            <tr><td>エクスポート／インポート</td><td>所有データをJSONファイルとして書き出し・読み込みする機能。バックアップと端末移動に使う。</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+    </div><!-- /doc-body -->
+
+    <!-- Footer -->
+    <div class="doc-footer">
+      <div class="left">ポケモンカード管理ツール 要件定義書<br>Ver. 0.2</div>
+      <div class="right">作成日：2026-07-25<br>ステータス：ドラフト</div>
+    </div>
+
+  </div><!-- /main-content -->
+</div><!-- /page-layout -->
+
+<script>
+  // Scroll spy
+  const sections = document.querySelectorAll('.section[id]');
+  const navLinks = document.querySelectorAll('.nav-link');
+  const observer = new IntersectionObserver(entries => {
+    entries.forEach(entry => {
+      if (entry.isIntersecting) {
+        navLinks.forEach(a => a.classList.remove('active'));
+        const active = document.querySelector(`.nav-link[href="#${entry.target.id}"]`);
+        if (active) active.classList.add('active');
+      }
+    });
+  }, { rootMargin: '-20% 0px -70% 0px' });
+  sections.forEach(s => observer.observe(s));
+</script>
+</body>
+</html>

@@ -1,0 +1,635 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ポケカ コレクション管理</title>
+<link rel="preconnect" href="https://assets.tcgdex.net" crossorigin>
+<link rel="dns-prefetch" href="https://assets.tcgdex.net">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg: #0f172a; --panel: #1e293b; --panel2: #273449;
+    --line: #334155; --text: #e2e8f0; --muted: #94a3b8;
+    --accent: #38bdf8; --accent2: #0ea5e9; --gold: #fbbf24;
+    --good: #34d399; --warn: #f59e0b;
+  }
+  body {
+    font-family: 'Hiragino Sans', 'Yu Gothic UI', 'Meiryo', system-ui, sans-serif;
+    background: var(--bg); color: var(--text); line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: inherit; }
+
+  /* Header */
+  header {
+    position: sticky; top: 0; z-index: 20;
+    background: rgba(15,23,42,0.92); backdrop-filter: blur(8px);
+    border-bottom: 1px solid var(--line);
+    padding: 12px 18px; display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  }
+  .brand { font-size: 16px; font-weight: 800; letter-spacing: .02em; cursor: pointer; display: flex; align-items: center; gap: 8px; }
+  .brand .dot { width: 20px; height: 20px; border-radius: 50%; background: linear-gradient(#ef4444 0 50%, #fff 50% 100%); border: 2px solid #1a1a1a; position: relative; }
+  .brand .dot::after { content:''; position:absolute; inset:0; margin:auto; width:6px; height:6px; background:#fff; border:2px solid #1a1a1a; border-radius:50%; }
+  .grow { flex: 1; }
+  .stat { font-size: 12px; color: var(--muted); }
+  .stat b { color: var(--accent); font-size: 15px; }
+  .btn {
+    background: var(--panel2); color: var(--text); border: 1px solid var(--line);
+    padding: 7px 12px; border-radius: 8px; font-size: 12px; cursor: pointer; font-family: inherit;
+    transition: background .12s, border-color .12s;
+  }
+  .btn:hover { background: #31435c; border-color: var(--accent); }
+  .btn.primary { background: var(--accent2); border-color: var(--accent2); color: #012; font-weight: 700; }
+  .btn.primary:hover { background: var(--accent); }
+  .btn.ghost { background: transparent; }
+  .btn:disabled { opacity: .4; cursor: default; }
+
+  /* Layout */
+  main { max-width: 1200px; margin: 0 auto; padding: 20px 18px 100px; }
+  .toolbar { display: flex; gap: 10px; align-items: center; margin-bottom: 18px; flex-wrap: wrap; }
+  .search {
+    flex: 1; min-width: 180px; background: var(--panel); border: 1px solid var(--line);
+    border-radius: 10px; padding: 9px 14px; color: var(--text); font-size: 14px; font-family: inherit;
+  }
+  .search::placeholder { color: #64748b; }
+  .search:focus { outline: none; border-color: var(--accent); }
+
+  .crumb { font-size: 13px; color: var(--muted); margin-bottom: 14px; }
+  .crumb a { cursor: pointer; color: var(--accent); text-decoration: none; }
+  .crumb a:hover { text-decoration: underline; }
+
+  h1.view-title { font-size: 20px; font-weight: 800; margin-bottom: 4px; }
+  .sub { color: var(--muted); font-size: 13px; margin-bottom: 18px; }
+
+  /* Set grid */
+  .set-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px,1fr)); gap: 14px; }
+  .set-card {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
+    padding: 16px; cursor: pointer; transition: transform .1s, border-color .12s;
+    display: flex; flex-direction: column; gap: 10px;
+  }
+  .set-card:hover { transform: translateY(-2px); border-color: var(--accent); }
+  .set-logo { height: 46px; display: flex; align-items: center; }
+  .set-logo img { max-height: 46px; max-width: 150px; object-fit: contain; }
+  .set-logo .fallback { font-size: 11px; color: var(--muted); background: var(--panel2); padding: 4px 8px; border-radius: 6px; }
+  .set-name { font-size: 14px; font-weight: 700; line-height: 1.4; }
+  .set-id { font-size: 11px; color: var(--muted); }
+  .prog { height: 8px; background: var(--panel2); border-radius: 6px; overflow: hidden; }
+  .prog > i { display: block; height: 100%; background: linear-gradient(90deg,var(--accent2),var(--good)); border-radius: 6px; transition: width .3s; }
+  .prog-txt { font-size: 12px; color: var(--muted); display: flex; justify-content: space-between; }
+  .prog-txt b { color: var(--text); }
+
+  /* Filters */
+  .filter-row { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }
+  .filter-label { font-size: 11px; color: var(--muted); margin-right: 2px; }
+  .chip { background: var(--panel); border: 1px solid var(--line); color: var(--muted); padding: 6px 13px; border-radius: 20px; font-size: 12px; cursor: pointer; user-select: none; }
+  .chip.on { background: var(--accent2); color: #012; border-color: var(--accent2); font-weight: 700; }
+  .chip.rar.on { background: var(--gold); border-color: var(--gold); color: #3a2a00; }
+  .rar-note { font-size: 11.5px; color: var(--warn); margin: -6px 0 14px; display: none; }
+  .rar-note.on { display: block; }
+
+  /* Card grid */
+  .card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px,1fr)); gap: 12px; }
+  .poke {
+    position: relative; border-radius: 10px; overflow: hidden; cursor: pointer;
+    background: var(--panel); border: 2px solid transparent; aspect-ratio: 63/88;
+    transition: border-color .12s, transform .08s;
+  }
+  .poke:hover { transform: scale(1.03); }
+  .poke img { width: 100%; height: 100%; object-fit: cover; display: block; transition: filter .15s, opacity .15s; }
+  .poke.unowned img { filter: grayscale(1) brightness(.55); opacity: .8; }
+  .poke.owned { border-color: var(--good); }
+  .poke.pending { border-color: var(--gold); box-shadow: 0 0 0 2px var(--gold) inset; }
+  .poke .num {
+    position: absolute; top: 5px; left: 5px; background: rgba(0,0,0,.7);
+    font-size: 10px; padding: 1px 6px; border-radius: 5px; color: #fff; font-weight: 600;
+  }
+  .poke .check {
+    position: absolute; top: 5px; right: 5px; width: 22px; height: 22px; border-radius: 50%;
+    background: var(--good); color: #052; display: none; align-items: center; justify-content: center;
+    font-size: 13px; font-weight: 900;
+  }
+  .poke.owned .check { display: flex; }
+  .poke.pending .check { background: var(--gold); color: #3a2a00; display: flex; }
+  .poke .flag { position: absolute; bottom: 26px; right: 5px; font-size: 9px; font-weight: 700; padding: 1px 6px; border-radius: 5px; display: none; }
+  .poke.pending .flag { display: block; background: var(--gold); color: #3a2a00; }
+  .poke.pending.rm .flag { background: #ef4444; color: #fff; }
+  .poke.pending.rm { border-color: #ef4444; box-shadow: 0 0 0 2px #ef4444 inset; }
+  .poke.pending.rm .check { display: none; }
+  .poke .nm {
+    position: absolute; bottom: 0; left: 0; right: 0; padding: 12px 6px 5px;
+    background: linear-gradient(transparent, rgba(0,0,0,.85)); font-size: 10.5px; color: #fff;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .poke .noimg { width:100%; height:100%; display:flex; align-items:center; justify-content:center; color:var(--muted); font-size:11px; text-align:center; padding:8px; }
+
+  .loading, .empty { text-align: center; color: var(--muted); padding: 60px 20px; font-size: 14px; }
+  .spinner { width: 34px; height: 34px; border: 3px solid var(--line); border-top-color: var(--accent); border-radius: 50%; margin: 0 auto 14px; animation: spin .8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* Save bar */
+  .savebar {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 30;
+    background: rgba(30,41,59,.97); backdrop-filter: blur(8px); border-top: 1px solid var(--gold);
+    padding: 12px 18px; display: none; align-items: center; gap: 14px; flex-wrap: wrap;
+    box-shadow: 0 -6px 20px rgba(0,0,0,.35);
+  }
+  .savebar.on { display: flex; }
+  .savebar .info { font-size: 13px; }
+  .savebar .info b { color: var(--gold); font-size: 15px; }
+  .savebar .add { color: var(--good); }
+  .savebar .rm { color: #f87171; }
+
+  /* Modal */
+  .modal-bg { position: fixed; inset: 0; background: rgba(0,0,0,.75); display: none; align-items: center; justify-content: center; z-index: 50; padding: 20px; }
+  .modal-bg.on { display: flex; }
+  .modal { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; max-width: 380px; width: 100%; padding: 18px; text-align: center; }
+  .modal img { max-width: 240px; width: 100%; border-radius: 10px; margin-bottom: 14px; }
+  .modal h3 { font-size: 17px; margin-bottom: 6px; }
+  .modal .meta { color: var(--muted); font-size: 13px; margin-bottom: 16px; }
+  .modal .meta span { color: var(--gold); }
+  .data-sec { background: var(--panel2); border: 1px solid var(--line); border-radius: 10px; padding: 14px; margin-bottom: 12px; }
+  .data-title { font-size: 13px; font-weight: 700; margin-bottom: 10px; }
+  .data-btns { display: flex; gap: 8px; margin-bottom: 8px; }
+  .data-btns .btn { flex: 1; }
+  .data-hint { font-size: 11.5px; color: var(--muted); line-height: 1.6; }
+  .toast { position: fixed; bottom: 78px; left: 50%; transform: translateX(-50%); background: var(--good); color: #042; padding: 10px 20px; border-radius: 30px; font-weight: 700; font-size: 13px; opacity: 0; transition: opacity .2s, transform .2s; pointer-events: none; z-index: 60; }
+  .toast.on { opacity: 1; transform: translateX(-50%) translateY(-4px); }
+</style>
+</head>
+<body>
+<header>
+  <div class="brand" onclick="goSets()"><span class="dot"></span>ポケカ コレクション</div>
+  <div class="grow"></div>
+  <div class="stat">所有 <b id="totalOwned">0</b> 枚</div>
+  <input type="file" id="importFileJson" accept="application/json,.json" style="display:none">
+  <input type="file" id="importFileCsv" accept=".csv,text/csv" style="display:none">
+  <button class="btn" onclick="openData()">データ管理</button>
+</header>
+
+<main>
+  <div id="view"></div>
+</main>
+
+<!-- 保存バー（未保存の選択があるとき表示） -->
+<div class="savebar" id="savebar">
+  <div class="info" id="saveInfo"></div>
+  <div class="grow"></div>
+  <button class="btn ghost" onclick="cancelPending()">キャンセル</button>
+  <button class="btn primary" onclick="savePending()">保存する</button>
+</div>
+
+<div class="modal-bg" id="modalBg" onclick="if(event.target===this)closeModal()">
+  <div class="modal" id="modalBody"></div>
+</div>
+
+<!-- データ管理モーダル -->
+<div class="modal-bg" id="dataBg" onclick="if(event.target===this)closeData()">
+  <div class="modal" style="text-align:left;max-width:420px">
+    <h3 style="text-align:center;margin-bottom:4px">データ管理</h3>
+    <p style="font-size:12px;color:var(--muted);text-align:center;margin-bottom:16px">所有データはこの端末のブラウザに保存されています。<br>定期的に書き出してバックアップしておくと安心です。</p>
+    <div class="data-sec">
+      <div class="data-title">バックアップを書き出す</div>
+      <div class="data-btns">
+        <button class="btn primary" onclick="exportCSV()">CSVで書出</button>
+        <button class="btn" onclick="exportJSON()">JSONで書出</button>
+      </div>
+      <div class="data-hint">CSVはExcel等で開けて中身を確認・手直しできます。壊れたときの復元向き。</div>
+    </div>
+    <div class="data-sec">
+      <div class="data-title">バックアップを読み込む</div>
+      <div class="data-btns">
+        <button class="btn primary" onclick="document.getElementById('importFileCsv').click()">CSVを読込</button>
+        <button class="btn" onclick="document.getElementById('importFileJson').click()">JSONを読込</button>
+      </div>
+      <div class="data-hint">読込時に「統合（追加）」か「上書き」を選べます。</div>
+    </div>
+    <div style="text-align:center;margin-top:6px"><button class="btn ghost" onclick="closeData()">閉じる</button></div>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+const API = 'https://api.tcgdex.net/v2/ja';
+const STORE_KEY = 'pokecard_owned_v1';
+// 日本語レア度コード → TCGdexのrarity文字列（実データで検証済み。メガ弾で有効、SV旧弾は未整備）
+const RARITY_MAP = { AR:'Illustration rare', SR:'Ultra Rare', SAR:'Special illustration rare', MUR:'Mega Hyper Rare' };
+const RARITY_CODES = Object.keys(RARITY_MAP);
+
+// ---- owned state（保存済み） ----
+let owned = loadOwned();
+function loadOwned() {
+  try { return JSON.parse(localStorage.getItem(STORE_KEY)) || {}; }
+  catch { return {}; }
+}
+function saveOwned() { localStorage.setItem(STORE_KEY, JSON.stringify(owned)); refreshTotal(); }
+function isOwned(id) { return !!owned[id]; }
+function ownedCountForSet(setId) { const p = setId + '-'; let n = 0; for (const k in owned) if (k.startsWith(p)) n++; return n; }
+function refreshTotal() { document.getElementById('totalOwned').textContent = Object.keys(owned).length; }
+
+// ---- pending（未保存の選択。保存済みと状態が異なるカードIDの集合） ----
+let pending = new Set();
+function displayOwned(id) { return pending.has(id) ? !owned[id] : !!owned[id]; }
+function togglePending(id) { if (pending.has(id)) pending.delete(id); else pending.add(id); updateSaveBar(); }
+function commitView() {
+  // セット表示中はその場更新（スクロール維持）。それ以外は通常再描画
+  if (location.hash && location.hash.length > 1 && window._refreshInPlace) window._refreshInPlace();
+  else rerender();
+}
+function cancelPending() { pending.clear(); updateSaveBar(); commitView(); }
+function savePending() {
+  let add = 0, rm = 0;
+  pending.forEach(id => { if (owned[id]) { delete owned[id]; rm++; } else { owned[id] = 1; add++; } });
+  pending.clear();
+  saveOwned();
+  updateSaveBar();
+  commitView();
+  toast(`保存しました（+${add}${rm?` / -${rm}`:''}）`);
+}
+function updateSaveBar() {
+  const bar = document.getElementById('savebar');
+  if (!pending.size) { bar.classList.remove('on'); return; }
+  let add = 0, rm = 0;
+  pending.forEach(id => { if (owned[id]) rm++; else add++; });
+  const parts = [];
+  if (add) parts.push(`<span class="add">+${add} 追加</span>`);
+  if (rm) parts.push(`<span class="rm">−${rm} 削除</span>`);
+  document.getElementById('saveInfo').innerHTML = `未保存の変更 <b>${pending.size}</b> 件 ・ ${parts.join(' / ')}`;
+  bar.classList.add('on');
+}
+
+// ---- data cache ----
+let setsCache = null;
+const setDetailCache = {};
+const rarityIndex = {}; // { setId: { code: Set(ids) } }
+
+async function getSets() {
+  if (setsCache) return setsCache;
+  const r = await fetch(API + '/sets');
+  if (!r.ok) throw new Error('sets ' + r.status);
+  setsCache = await r.json();
+  return setsCache;
+}
+async function getSet(id) {
+  if (setDetailCache[id]) return setDetailCache[id];
+  const r = await fetch(API + '/sets/' + id);
+  if (!r.ok) throw new Error('set ' + r.status);
+  const d = await r.json();
+  setDetailCache[id] = d;
+  return d;
+}
+async function ensureRarity(setId) {
+  if (rarityIndex[setId]) return rarityIndex[setId];
+  const idx = {};
+  await Promise.all(RARITY_CODES.map(async code => {
+    try {
+      const r = await fetch(`${API}/cards?set=${encodeURIComponent(setId)}&rarity=${encodeURIComponent(RARITY_MAP[code])}`);
+      const arr = r.ok ? await r.json() : [];
+      idx[code] = new Set(arr.map(c => c.id));
+    } catch { idx[code] = new Set(); }
+  }));
+  rarityIndex[setId] = idx;
+  return idx;
+}
+
+// ---- views ----
+const view = document.getElementById('view');
+function loading(msg) { view.innerHTML = `<div class="loading"><div class="spinner"></div>${msg||'読み込み中...'}</div>`; }
+
+async function goSets() {
+  location.hash = '';
+  pending.clear(); updateSaveBar();
+  loading('セット一覧を取得中...');
+  try {
+    const sets = await getSets();
+    const list = sets.slice().reverse(); // 新しめを上に
+    renderSets(list);
+  } catch (e) {
+    view.innerHTML = `<div class="empty">セット一覧の取得に失敗しました。<br>ネット接続を確認して再読み込みしてください。<br><small>${e.message}</small></div>`;
+  }
+}
+
+function renderSets(list) {
+  view.innerHTML = `
+    <h1 class="view-title">セット一覧</h1>
+    <div class="sub">カードのセット（拡張パック等）を選ぶと、図鑑ビューで所有を登録できます。</div>
+    <div class="toolbar"><input class="search" id="setSearch" placeholder="セット名で絞り込み..."></div>
+    <div class="set-grid" id="setGrid"></div>`;
+  const grid = document.getElementById('setGrid');
+  const draw = (arr) => {
+    if (!arr.length) { grid.innerHTML = `<div class="empty">該当するセットがありません。</div>`; return; }
+    grid.innerHTML = arr.map(s => {
+      const total = (s.cardCount && s.cardCount.total) || 0;
+      const own = ownedCountForSet(s.id);
+      const pct = total ? Math.round(own/total*100) : 0;
+      const logo = s.logo ? `<img src="${s.logo}.png" alt="" onerror="this.style.display='none'">` : `<span class="fallback">${s.id}</span>`;
+      return `<div class="set-card" onclick="goSet('${s.id}')">
+        <div class="set-logo">${logo}</div>
+        <div>
+          <div class="set-name">${esc(s.name)}</div>
+          <div class="set-id">${s.id}</div>
+        </div>
+        <div class="prog"><i style="width:${pct}%"></i></div>
+        <div class="prog-txt"><span>コンプ率 ${pct}%</span><b>${own} / ${total}</b></div>
+      </div>`;
+    }).join('');
+  };
+  draw(list);
+  document.getElementById('setSearch').addEventListener('input', e => {
+    const q = e.target.value.trim().toLowerCase();
+    draw(list.filter(s => s.name.toLowerCase().includes(q) || s.id.toLowerCase().includes(q)));
+  });
+}
+
+let curOwnedFilter = 'all';
+let curRarities = new Set();
+async function goSet(id) {
+  location.hash = id;
+  pending.clear(); updateSaveBar();
+  loading('カードを取得中...');
+  try {
+    const set = await getSet(id);
+    curOwnedFilter = 'all';
+    curRarities = new Set();
+    renderSet(set);
+  } catch (e) {
+    view.innerHTML = `<div class="empty">カードの取得に失敗しました。<br><small>${e.message}</small></div>`;
+  }
+}
+
+function renderSet(set) {
+  const cards = set.cards || [];
+  view.innerHTML = `
+    <div class="crumb"><a onclick="goSets()">セット一覧</a> ／ ${esc(set.name)}</div>
+    <h1 class="view-title">${esc(set.name)} <span style="font-size:13px;color:var(--muted)">(${set.id})</span></h1>
+    <div class="sub" id="setSub"></div>
+    <div class="filter-row">
+      <span class="filter-label">状態</span>
+      <span class="chip owned-f" data-f="all">すべて</span>
+      <span class="chip owned-f" data-f="owned">所有のみ</span>
+      <span class="chip owned-f" data-f="unowned">未所有のみ</span>
+    </div>
+    <div class="filter-row">
+      <span class="filter-label">レア度</span>
+      <span class="chip rar" data-r="AR">AR</span>
+      <span class="chip rar" data-r="SR">SR</span>
+      <span class="chip rar" data-r="SAR">SAR</span>
+      <span class="chip rar" data-r="MUR">MUR</span>
+    </div>
+    <div class="rar-note" id="rarNote">このセットは AR/SR/SAR/MUR のレアリティ情報が未整備です（TCGdexの日本語データの制約。主に旧SV弾）。</div>
+    <div class="card-grid" id="cardGrid"></div>`;
+
+  const grid = document.getElementById('cardGrid');
+  const sub = document.getElementById('setSub');
+
+  const drawOwnedChips = () => view.querySelectorAll('.chip.owned-f').forEach(c => c.classList.toggle('on', c.dataset.f === curOwnedFilter));
+  const drawRarChips = () => view.querySelectorAll('.chip.rar').forEach(c => c.classList.toggle('on', curRarities.has(c.dataset.r)));
+
+  view.querySelectorAll('.chip.owned-f').forEach(c => c.onclick = () => { curOwnedFilter = c.dataset.f; drawOwnedChips(); drawCards(); });
+  view.querySelectorAll('.chip.rar').forEach(c => c.onclick = async () => {
+    const code = c.dataset.r;
+    if (curRarities.has(code)) curRarities.delete(code); else curRarities.add(code);
+    drawRarChips();
+    if (curRarities.size) { c.textContent = '…'; await ensureRarity(set.id); c.textContent = code; }
+    drawCards();
+  });
+  drawOwnedChips(); drawRarChips();
+
+  function drawCards() {
+    // レア度フィルタ適用対象IDの算出
+    let rarPass = null; // null = フィルタ無し
+    if (curRarities.size && rarityIndex[set.id]) {
+      rarPass = new Set();
+      curRarities.forEach(code => (rarityIndex[set.id][code] || new Set()).forEach(id => rarPass.add(id)));
+      // このセットに該当レア度データが全く無い場合は注意表示
+      const anyData = RARITY_CODES.some(c => (rarityIndex[set.id][c] || new Set()).size > 0);
+      document.getElementById('rarNote').classList.toggle('on', !anyData);
+    } else {
+      document.getElementById('rarNote').classList.remove('on');
+    }
+
+    const total = cards.length;
+    const own = cards.filter(c => isOwned(c.id)).length;
+    const pct = total ? Math.round(own/total*100) : 0;
+    sub.innerHTML = `コンプ率 <b style="color:var(--accent)">${pct}%</b> ・ ${own} / ${total} 枚 <span style="color:#64748b">（カードをタップで選択 → 保存で登録）</span>`;
+
+    let shown = cards;
+    if (curOwnedFilter === 'owned') shown = shown.filter(c => displayOwned(c.id));
+    else if (curOwnedFilter === 'unowned') shown = shown.filter(c => !displayOwned(c.id));
+    if (rarPass) shown = shown.filter(c => rarPass.has(c.id));
+
+    if (!shown.length) { grid.innerHTML = `<div class="empty">表示するカードがありません。</div>`; return; }
+
+    grid.innerHTML = shown.map(c => {
+      const dOwned = displayOwned(c.id);
+      const isPend = pending.has(c.id);
+      const isRm = isPend && owned[c.id]; // 保存済み所有を外そうとしている
+      let cls = dOwned ? 'owned' : 'unowned';
+      if (isPend) cls += isRm ? ' pending rm' : ' pending';
+      const img = c.image
+        ? `<img src="${c.image}/low.png" alt="${esc(c.name)}" loading="lazy" decoding="async" onerror="this.parentNode.innerHTML='<div class=\\'noimg\\'>${esc(c.name)}</div>'">`
+        : `<div class="noimg">${esc(c.name)}</div>`;
+      return `<div class="poke ${cls}" data-id="${c.id}">
+        ${img}
+        <div class="num">${c.localId}</div>
+        <div class="check">✓</div>
+        <div class="flag">${isRm ? '削除予定' : '追加予定'}</div>
+        <div class="nm">${esc(c.name)}</div>
+      </div>`;
+    }).join('');
+
+    grid.querySelectorAll('.poke').forEach(el => {
+      let pressTimer = null, longPress = false;
+      const id = el.dataset.id;
+      el.addEventListener('click', () => {
+        if (longPress) { longPress = false; return; }
+        togglePending(id);
+        // 当該カードだけ見た目更新（フィルタで消える場合は全体再描画）
+        if (curOwnedFilter === 'all') updateCardEl(el, id);
+        else drawCards();
+      });
+      el.addEventListener('contextmenu', e => { e.preventDefault(); openCard(id); });
+      el.addEventListener('touchstart', () => { pressTimer = setTimeout(() => { longPress = true; openCard(id); }, 500); }, {passive:true});
+      el.addEventListener('touchend', () => clearTimeout(pressTimer));
+    });
+  }
+
+  function updateCardEl(el, id) {
+    const dOwned = displayOwned(id);
+    const isPend = pending.has(id);
+    const isRm = isPend && owned[id];
+    el.className = 'poke ' + (dOwned ? 'owned' : 'unowned') + (isPend ? (isRm ? ' pending rm' : ' pending') : '');
+    const flag = el.querySelector('.flag'); if (flag) flag.textContent = isRm ? '削除予定' : '追加予定';
+  }
+
+  // 保存/キャンセル後：グリッドを作り直さず、その場で見た目とコンプ率だけ更新（スクロール位置維持）
+  function refreshInPlace() {
+    grid.querySelectorAll('.poke').forEach(el => updateCardEl(el, el.dataset.id));
+    const total = cards.length;
+    const own = cards.filter(c => isOwned(c.id)).length;
+    const pct = total ? Math.round(own/total*100) : 0;
+    sub.innerHTML = `コンプ率 <b style="color:var(--accent)">${pct}%</b> ・ ${own} / ${total} 枚 <span style="color:#64748b">（カードをタップで選択 → 保存で登録）</span>`;
+  }
+
+  window._redrawSet = drawCards;       // モーダル等からの再描画用
+  window._refreshInPlace = refreshInPlace; // 保存/キャンセル用
+  drawCards();
+}
+
+// ---- card detail modal ----
+async function openCard(id) {
+  const mb = document.getElementById('modalBg'), body = document.getElementById('modalBody');
+  mb.classList.add('on');
+  body.innerHTML = `<div class="loading"><div class="spinner"></div>読み込み中...</div>`;
+  try {
+    const r = await fetch(API + '/cards/' + id);
+    const c = await r.json();
+    const willOwn = displayOwned(id);
+    body.innerHTML = `
+      ${c.image ? `<img src="${c.image}/high.png" alt="">` : ''}
+      <h3>${esc(c.name)}</h3>
+      <div class="meta">No.${c.localId} ・ レアリティ <span>${esc(c.rarity||'不明')}</span><br>${esc((c.set&&c.set.name)||'')}</div>
+      <button class="btn primary" style="width:100%" id="mToggle">${willOwn?'✓ 選択中（タップで外す）':'選択に追加する'}</button>`;
+    document.getElementById('mToggle').onclick = () => {
+      togglePending(id);
+      closeModal();
+      if (window._redrawSet) window._redrawSet();
+    };
+  } catch (e) {
+    body.innerHTML = `<div class="empty">詳細を取得できませんでした。</div>`;
+  }
+}
+function closeModal() { document.getElementById('modalBg').classList.remove('on'); }
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
+
+// ---- データ管理モーダル ----
+function openData() { document.getElementById('dataBg').classList.add('on'); }
+function closeData() { document.getElementById('dataBg').classList.remove('on'); }
+
+function ts() { try { return new Date().toISOString().slice(0,10); } catch { return 'backup'; } }
+function download(text, name, type) {
+  const blob = new Blob([text], { type });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+// --- JSON ---
+function exportJSON() {
+  const data = { version: 1, exportedAt: (function(){ try { return new Date().toISOString(); } catch { return ''; } })(), owned };
+  download(JSON.stringify(data, null, 2), `pokecard_backup_${ts()}.json`, 'application/json');
+  toast('JSONを書き出しました');
+}
+
+// --- CSV（card_id,set_id,number,owned。人間が読めて復元しやすい形式） ---
+function csvCell(v) { v = String(v); return /[",\r\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; }
+function exportCSV() {
+  const rows = [['card_id','set_id','number','owned']];
+  Object.keys(owned).sort().forEach(id => {
+    const m = id.match(/^(.*)-([^-]+)$/);
+    rows.push([id, m ? m[1] : '', m ? m[2] : '', '1']);
+  });
+  const csv = rows.map(r => r.map(csvCell).join(',')).join('\r\n');
+  download('﻿' + csv, `pokecard_backup_${ts()}.csv`, 'text/csv;charset=utf-8');
+  toast('CSVを書き出しました');
+}
+
+// 簡易CSVパーサ（引用符・改行・カンマ対応）
+function parseCSV(text) {
+  text = text.replace(/^﻿/, '');
+  const rows = []; let row = [], cell = '', q = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (q) {
+      if (c === '"') { if (text[i+1] === '"') { cell += '"'; i++; } else q = false; }
+      else cell += c;
+    } else {
+      if (c === '"') q = true;
+      else if (c === ',') { row.push(cell); cell = ''; }
+      else if (c === '\r') { /* skip */ }
+      else if (c === '\n') { row.push(cell); rows.push(row); row = []; cell = ''; }
+      else cell += c;
+    }
+  }
+  if (cell !== '' || row.length) { row.push(cell); rows.push(row); }
+  return rows.filter(r => r.length && r.some(x => x !== ''));
+}
+
+function applyImport(incoming, label) {
+  if (!incoming || typeof incoming !== 'object') { alert('読み込めるデータではありませんでした。'); return; }
+  const merge = confirm(`${label}を読み込みます。\n[OK]=いまのデータに統合（追加）\n[キャンセル]=丸ごと上書き`);
+  owned = merge ? Object.assign({}, owned, incoming) : incoming;
+  pending.clear(); updateSaveBar();
+  saveOwned();
+  closeData();
+  toast(`${label}を読み込みました`);
+  rerender();
+}
+
+document.getElementById('importFileJson').addEventListener('change', e => {
+  const f = e.target.files[0]; if (!f) return;
+  const rd = new FileReader();
+  rd.onload = () => {
+    try {
+      const d = JSON.parse(rd.result);
+      const inc = d.owned || d;
+      const map = {};
+      Object.keys(inc).forEach(k => { if (inc[k]) map[k] = 1; });
+      applyImport(map, 'JSON');
+    } catch { alert('読み込めるJSONではありませんでした。'); }
+  };
+  rd.readAsText(f); e.target.value = '';
+});
+
+document.getElementById('importFileCsv').addEventListener('change', e => {
+  const f = e.target.files[0]; if (!f) return;
+  const rd = new FileReader();
+  rd.onload = () => {
+    try {
+      const rows = parseCSV(rd.result);
+      if (!rows.length) throw 0;
+      // ヘッダ行から card_id / owned 列を特定（無ければ1列目をID扱い）
+      const head = rows[0].map(h => h.trim().toLowerCase());
+      let idCol = head.indexOf('card_id'), ownCol = head.indexOf('owned');
+      let start = 1;
+      if (idCol === -1) { idCol = 0; ownCol = head.indexOf('owned'); start = /^[a-z_]+$/i.test(rows[0][0]) && head.includes('card_id') ? 1 : 0; }
+      const map = {};
+      for (let i = start; i < rows.length; i++) {
+        const id = (rows[i][idCol] || '').trim();
+        if (!id || id.toLowerCase() === 'card_id') continue;
+        const ownVal = ownCol >= 0 ? String(rows[i][ownCol]).trim().toLowerCase() : '1';
+        const isOwn = ownCol < 0 || ['1','true','yes','o','y','所有','◯','○','あり'].includes(ownVal);
+        if (isOwn) map[id] = 1;
+      }
+      applyImport(map, 'CSV');
+    } catch { alert('読み込めるCSVではありませんでした。'); }
+  };
+  rd.readAsText(f); e.target.value = '';
+});
+
+function rerender() {
+  const h = location.hash.slice(1);
+  if (h && setDetailCache[h]) renderSet(setDetailCache[h]);
+  else if (h) goSet(h);
+  else goSets();
+}
+
+// ---- utils ----
+function esc(s) { return String(s==null?'':s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
+let toastTimer;
+function toast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.classList.add('on');
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('on'), 1800);
+}
+
+// ---- boot ----
+refreshTotal();
+if (location.hash && location.hash.length > 1) goSet(location.hash.slice(1));
+else goSets();
+</script>
+</body>
+</html>
