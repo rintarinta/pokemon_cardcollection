@@ -274,7 +274,7 @@
 const API = 'https://api.tcgdex.net/v2/ja';
 const STORE_KEY = 'pokecard_owned_v1';
 // 日本語レア度コード → TCGdexのrarity文字列（実データで検証済み。メガ弾で有効、SV旧弾は未整備）
-const RARITY_MAP = { AR:'Illustration rare', SR:'Ultra Rare', SAR:'Special illustration rare', MUR:'Mega Hyper Rare' };
+const RARITY_MAP = { AR:'Illustration rare', SR:'Ultra Rare', SAR:'Special illustration rare', MUR:'Mega Hyper Rare', CHR:'Character Rare' };
 const RARITY_CODES = Object.keys(RARITY_MAP);
 
 // TCGdexの誤表記セット名を上書き（例: SV4aは実際はシャイニートレジャーex）
@@ -518,6 +518,42 @@ function dispRarity(c) {
   return '';
 }
 
+// ===== 手動カード名（共有マスタ card_names）。TCGdex/手動カードの名前を上書き・補完 =====
+const NAME_KEY = 'pokecard_mastername';
+let masterName = {}; try { masterName = JSON.parse(localStorage.getItem(NAME_KEY)) || {}; } catch {}
+function saveNameCache() { try { localStorage.setItem(NAME_KEY, JSON.stringify(masterName)); } catch {} }
+// 表示名: 手動上書き > 元の名前(TCGdex/custom) > No.番号
+function cardName(c) { return masterName[c.id] || c.name || ('No.' + (c.localId || '')); }
+async function fetchMasterName() {
+  if (!cloudConfigured()) return;
+  try {
+    const r = await fetch(`${SUPABASE_URL}/rest/v1/card_names?select=card_id,name`, { headers: { apikey: SUPABASE_ANON } });
+    if (!r.ok) return;
+    const m = {}; (await r.json()).forEach(x => { if (x.name) m[x.card_id] = x.name; });
+    masterName = m; saveNameCache();
+    if (window._redrawSet) window._redrawSet();
+  } catch {}
+}
+async function cloudPushName(id, name, retry) {
+  const r = await fetch(`${SUPABASE_URL}/rest/v1/card_names?on_conflict=card_id`, {
+    method: 'POST', headers: authHeaders({ 'Content-Type': 'application/json', Prefer: 'resolution=merge-duplicates,return=minimal' }),
+    body: JSON.stringify([{ card_id: id, name: name, updated_at: nowISO() }])
+  });
+  if (r.status === 401 && !retry) { await refreshSession(); return cloudPushName(id, name, true); }
+  if (!r.ok) throw new Error('名前 ' + r.status);
+}
+async function cloudDeleteName(id, retry) {
+  const r = await fetch(`${SUPABASE_URL}/rest/v1/card_names?card_id=eq.${encodeURIComponent(id)}`, { method: 'DELETE', headers: authHeaders() });
+  if (r.status === 401 && !retry) { await refreshSession(); return cloudDeleteName(id, true); }
+}
+async function setCardName(id, name) {
+  if (!loggedIn()) { alert('名前の登録はログインが必要です。'); return; }
+  name = (name || '').trim();
+  if (name) { await cloudPushName(id, name); masterName[id] = name; }
+  else { await cloudDeleteName(id); delete masterName[id]; }
+  saveNameCache();
+}
+
 // ===== 手動カード登録（TCGdexに無いカードを共有マスタで補完。custom_cardsテーブル） =====
 const customCardsBySet = {}; // setId -> [{id,localId,name,image:null,custom:true}]
 function pad3(n) { const s = String(n).replace(/[^0-9]/g, ''); return s ? s.padStart(3, '0') : String(n); }
@@ -529,7 +565,7 @@ async function loadCustomCards(setId) {
     const rows = await r.json();
     customCardsBySet[setId] = rows.map(x => {
       if (x.image_url) masterImg[x.card_id] = x.image_url;
-      return { id: x.card_id, localId: x.local_id || '', name: x.name || ('No.' + (x.local_id || '')), image: null, custom: true };
+      return { id: x.card_id, localId: x.local_id || '', name: x.name || '', image: null, custom: true };
     });
     saveMasterCache();
   } catch { customCardsBySet[setId] = customCardsBySet[setId] || []; }
@@ -645,7 +681,7 @@ function cardCellHtml(c) {
     ${rar ? `<div class="rar-badge">${esc(rar)}</div>` : ''}
     <div class="check"></div>
     <div class="flag">${isRm ? '削除予定' : '追加予定'}</div>
-    <div class="nm">${esc(c.name)}</div>
+    <div class="nm">${esc(cardName(c))}</div>
     <button class="info-btn" data-info="${c.id}" title="詳細・画像登録">i</button>
   </div>`;
 }
@@ -761,6 +797,7 @@ function renderSet(set) {
       <span class="chip rar" data-r="SR">SR</span>
       <span class="chip rar" data-r="SAR">SAR</span>
       <span class="chip rar" data-r="MUR">MUR</span>
+      <span class="chip rar" data-r="CHR">CHR</span>
     </div>
     <div class="rar-note" id="rarNote">該当レア度のカードが見つかりません。TCGdex未整備の弾でも、各カードの「i」→「レア度」で手動設定すればここで絞り込めます（全員に共有）。</div>
     <div class="card-grid" id="cardGrid"></div>`;
@@ -979,22 +1016,42 @@ async function openCard(id) {
         <input type="file" id="imgFile" accept="image/*" style="display:none">
         <div class="imgreg-hint">${loggedIn()?'登録するとログイン利用者みんなに共有されます。':'ログインすると全員に共有できます（今はこの端末のみ保存）。'}公式カード画像のURL貼付けがおすすめ。</div>
       </div>`;
+    const nameEditHtml = `
+      <div class="imgreg">
+        <div class="imgreg-title">カード名（手動・全員に共有）</div>
+        <input id="nameInput" class="imgreg-input" placeholder="カード名を入力" value="${esc(masterName[id] || '')}">
+        <div class="imgreg-btns">
+          <button class="btn primary" id="nameSave">名前を登録</button>
+          ${masterName[id] ? '<button class="btn" id="nameDel">クリア</button>' : ''}
+        </div>
+      </div>`;
     const rarEditHtml = `
       <div class="imgreg">
         <div class="imgreg-title">レア度（手動・全員に共有）</div>
         <div id="rarEdit" style="display:flex;gap:6px;flex-wrap:wrap">
-          ${['AR','SR','SAR','MUR'].map(code => `<span class="chip rar-set ${masterRarity[id] === code ? 'on' : ''}" data-r="${code}">${code}</span>`).join('')}
+          ${['AR','SR','SAR','MUR','CHR'].map(code => `<span class="chip rar-set ${masterRarity[id] === code ? 'on' : ''}" data-r="${code}">${code}</span>`).join('')}
           <span class="chip rar-set" data-r="">クリア</span>
         </div>
       </div>`;
     body.innerHTML = `
       ${imgHtml}
-      <h3>${esc(c.name)}</h3>
+      <h3>${esc(masterName[id] || c.name || ('No.' + c.localId))}</h3>
       <div class="meta">No.${c.localId} ・ レアリティ <span>${esc(masterRarity[id] || c.rarity || '不明')}</span><br>${esc((c.set&&c.set.name)||'')}</div>
       <button class="btn primary" style="width:100%" id="mToggle">${willOwn?'選択中（タップで外す）':'選択に追加する'}</button>
+      ${nameEditHtml}
       ${rarEditHtml}
       ${regHtml}
       ${isCustomCard ? `<button class="btn ghost" style="width:100%;margin-top:8px;color:#f87171" id="delCard">このカードを一覧から削除</button>` : ''}`;
+    const nameSaveBtn = document.getElementById('nameSave');
+    if (nameSaveBtn) nameSaveBtn.onclick = async () => {
+      try { await setCardName(id, document.getElementById('nameInput').value); if (window._redrawSet) window._redrawSet(); closeModal(); toast('名前を登録しました'); }
+      catch (e) { alert('名前の登録に失敗：' + e.message); }
+    };
+    const nameDelBtn = document.getElementById('nameDel');
+    if (nameDelBtn) nameDelBtn.onclick = async () => {
+      try { await setCardName(id, ''); if (window._redrawSet) window._redrawSet(); closeModal(); toast('名前をクリアしました'); }
+      catch (e) { alert(e.message); }
+    };
     document.getElementById('mToggle').onclick = () => {
       togglePending(id);
       closeModal();
@@ -1388,6 +1445,7 @@ route(location.hash.slice(1));
 fetchMasterImages(); // 共有画像マスタを取得（未ログインでも表示に反映）
 fetchSetPatterns();  // セット画像パターンを取得
 fetchMasterRarity(); // 手動レア度を取得
+fetchMasterName();   // 手動カード名を取得
 if (loggedIn()) {
   cloudInitialSync(); // ログイン済みなら起動時にクラウドから取得
 } else if (cloudConfigured() && localStorage.getItem('pokecard_localonly') !== '1') {
