@@ -611,6 +611,8 @@ async function ensureRarity(setId) {
       idx[code] = new Set(arr.map(c => c.id));
     } catch { idx[code] = new Set(); }
   }));
+  // TCGdexの "Illustration rare"(AR) は "Special illustration rare"(SAR) も部分一致で拾うため、SARをARから除外
+  if (idx.AR && idx.SAR) idx.SAR.forEach(id => idx.AR.delete(id));
   rarityIndex[setId] = idx;
   return idx;
 }
@@ -660,7 +662,8 @@ async function goSets() {
   loading('セット一覧を取得中...');
   try {
     const sets = await getSets();
-    const list = sets.slice().reverse(); // 新しめを上に
+    // CS系は実データ0枚の重複（幽霊）セット（同名が大量に並ぶ）ため一覧から除外
+    const list = sets.filter(s => !/^CS/.test(s.id)).reverse(); // 新しめを上に
     renderSets(list);
   } catch (e) {
     view.innerHTML = `<div class="empty">セット一覧の取得に失敗しました。<br>ネット接続を確認して再読み込みしてください。<br><small>${e.message}</small></div>`;
