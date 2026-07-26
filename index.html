@@ -529,7 +529,7 @@ async function loadCustomCards(setId) {
     const rows = await r.json();
     customCardsBySet[setId] = rows.map(x => {
       if (x.image_url) masterImg[x.card_id] = x.image_url;
-      return { id: x.card_id, localId: x.local_id || '', name: x.name || '(無名)', image: null, custom: true };
+      return { id: x.card_id, localId: x.local_id || '', name: x.name || ('No.' + (x.local_id || '')), image: null, custom: true };
     });
     saveMasterCache();
   } catch { customCardsBySet[setId] = customCardsBySet[setId] || []; }
@@ -784,8 +784,9 @@ function renderSet(set) {
   function drawCards() {
     // このセットはTCGdexにカード実データが無い（枚数だけ登録され中身が空）
     if (!cards.length) {
-      document.getElementById('setSub').innerHTML = `カード ${(set.cardCount && set.cardCount.total) || 0} 枚（データ未整備）`;
-      grid.innerHTML = `<div class="empty">このセットのカードデータが TCGdex にまだありません。<br><small>${esc(set.name)}（${set.id}）・データが追加されれば自動で表示されます</small></div>`;
+      const tot = (set.cardCount && set.cardCount.total) || 0;
+      document.getElementById('setSub').innerHTML = `カード ${tot} 枚（TCGdex未整備）`;
+      grid.innerHTML = `<div class="empty">このセットのカードデータが TCGdex にありません。<br><small>${esc(setName(set))}（${set.id}）</small><br><br>上の「＋ カード追加」から手動で登録できます。<br>${tot ? `「1〜${tot}番を空生成」で番号だけ一括作成もできます（あとで名前・画像を追加可）。` : ''}<br>登録は全員に共有され、TCGdexにデータが入れば自動で切り替わります。</div>`;
       return;
     }
     // レア度フィルタ適用対象IDの算出（TCGdexバケット＋手動レア度）
