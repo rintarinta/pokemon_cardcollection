@@ -77,6 +77,10 @@
   .set-id { font-size: 11px; color: var(--muted); }
   .prog { height: 8px; background: var(--panel2); border-radius: 6px; overflow: hidden; }
   .prog > i { display: block; height: 100%; background: linear-gradient(90deg,var(--accent2),var(--good)); border-radius: 6px; transition: width .3s; }
+  .stat-row { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 11px 14px; margin-bottom: 8px; cursor: pointer; }
+  .stat-row:hover { border-color: var(--accent); }
+  .stat-row-top { display: flex; justify-content: space-between; align-items: center; font-size: 13px; margin-bottom: 8px; }
+  .stat-row-top b { color: var(--text); }
   .prog-txt { font-size: 12px; color: var(--muted); display: flex; justify-content: space-between; }
   .prog-txt b { color: var(--text); }
 
@@ -199,6 +203,8 @@
 <body>
 <header>
   <div class="brand" onclick="goSets()"><span class="dot"></span>ポケカ コレクション</div>
+  <button class="btn" onclick="goSearch()">🔍 検索</button>
+  <button class="btn" onclick="goStats()">📊 集計</button>
   <div class="grow"></div>
   <div class="stat">所有 <b id="totalOwned">0</b> 枚</div>
   <div class="stat" id="syncStatus" style="color:var(--good);cursor:pointer" onclick="openData()" title="アカウント・データ管理"></div>
@@ -613,6 +619,40 @@ async function ensureRarity(setId) {
 const view = document.getElementById('view');
 function loading(msg) { view.innerHTML = `<div class="loading"><div class="spinner"></div>${msg||'読み込み中...'}</div>`; }
 
+// カードセルHTML（セット表示・検索で共通）
+function cardCellHtml(c) {
+  const dOwned = displayOwned(c.id);
+  const isPend = pending.has(c.id);
+  const isRm = isPend && owned[c.id];
+  let cls = dOwned ? 'owned' : 'unowned';
+  if (isPend) cls += isRm ? ' pending rm' : ' pending';
+  const src = cardThumb(c);
+  const noimgHtml = `<div class=\\'noimg\\'><small style=\\'color:#60a5fa\\'>ⓘで画像追加</small></div>`;
+  const img = src
+    ? `<img src="${src}" alt="${esc(c.name)}" loading="lazy" decoding="async" onerror="this.outerHTML='${noimgHtml}'">`
+    : `<div class="noimg"><small style="color:#60a5fa">ⓘで画像追加</small></div>`;
+  const rar = dispRarity(c);
+  return `<div class="poke ${cls}" data-id="${c.id}">
+    ${img}
+    <div class="num">${c.localId}</div>
+    ${rar ? `<div class="rar-badge">${esc(rar)}</div>` : ''}
+    <div class="check">✓</div>
+    <div class="flag">${isRm ? '削除予定' : '追加予定'}</div>
+    <div class="nm">${esc(c.name)}</div>
+    <button class="info-btn" data-info="${c.id}" title="詳細・画像登録">ⓘ</button>
+  </div>`;
+}
+// カードセルの操作割当（redraw=タップ後の再描画関数）
+function wireCardCells(grid, redraw) {
+  grid.querySelectorAll('.poke').forEach(el => {
+    const id = el.dataset.id;
+    el.addEventListener('click', () => { togglePending(id); redraw(); });
+    const info = el.querySelector('.info-btn');
+    if (info) info.addEventListener('click', e => { e.stopPropagation(); e.preventDefault(); openCard(id); });
+    el.addEventListener('contextmenu', e => { e.preventDefault(); openCard(id); });
+  });
+}
+
 async function goSets() {
   renderedHash = '';
   location.hash = '';
@@ -759,30 +799,7 @@ function renderSet(set) {
 
     if (!shown.length) { grid.innerHTML = `<div class="empty">表示するカードがありません。</div>`; return; }
 
-    grid.innerHTML = shown.map(c => {
-      const dOwned = displayOwned(c.id);
-      const isPend = pending.has(c.id);
-      const isRm = isPend && owned[c.id]; // 保存済み所有を外そうとしている
-      let cls = dOwned ? 'owned' : 'unowned';
-      if (isPend) cls += isRm ? ' pending rm' : ' pending';
-      const src = cardThumb(c);
-      // 画像なしでも画像ありと同じレイアウト（番号=左上バッジ / 名前=下 / ⓘ=右下）。中央はヒントのみ
-      // 404時は img だけを差し替える（outerHTML）。parentNodeを消すとⓘボタン等まで消えるため
-      const noimgHtml = `<div class=\\'noimg\\'><small style=\\'color:#60a5fa\\'>ⓘで画像追加</small></div>`;
-      const img = src
-        ? `<img src="${src}" alt="${esc(c.name)}" loading="lazy" decoding="async" onerror="this.outerHTML='${noimgHtml}'">`
-        : `<div class="noimg"><small style="color:#60a5fa">ⓘで画像追加</small></div>`;
-      const rar = dispRarity(c);
-      return `<div class="poke ${cls}" data-id="${c.id}">
-        ${img}
-        <div class="num">${c.localId}</div>
-        ${rar ? `<div class="rar-badge">${esc(rar)}</div>` : ''}
-        <div class="check">✓</div>
-        <div class="flag">${isRm ? '削除予定' : '追加予定'}</div>
-        <div class="nm">${esc(c.name)}</div>
-        <button class="info-btn" data-info="${c.id}" title="詳細・画像登録">ⓘ</button>
-      </div>`;
-    }).join('');
+    grid.innerHTML = shown.map(cardCellHtml).join('');
 
     grid.querySelectorAll('.poke').forEach(el => {
       const id = el.dataset.id;
@@ -823,6 +840,92 @@ function renderSet(set) {
   window._redrawSet = drawCards;       // モーダル等からの再描画用
   window._refreshInPlace = refreshInPlace; // 保存/キャンセル用
   drawCards();
+}
+
+// ---- カード名検索（F-03・横断） ----
+let searchResults = [];
+async function goSearch() {
+  renderedHash = 'search'; location.hash = 'search';
+  pending.clear(); updateSaveBar();
+  renderSearchView();
+}
+function renderSearchView() {
+  searchResults = [];
+  view.innerHTML = `
+    <h1 class="view-title">カード名で検索</h1>
+    <div class="sub">セットをまたいでカードを探し、そのまま所有登録できます。</div>
+    <div class="toolbar"><input class="search" id="cardSearch" placeholder="カード名（例: リザードン）" autocomplete="off"></div>
+    <div id="searchResult"><div class="empty">2文字以上入力すると検索します。</div></div>`;
+  const inp = document.getElementById('cardSearch');
+  try { inp.focus(); } catch {}
+  let timer = null;
+  inp.addEventListener('input', () => {
+    clearTimeout(timer);
+    const q = inp.value.trim();
+    if (q.length < 2) { document.getElementById('searchResult').innerHTML = '<div class="empty">2文字以上入力すると検索します。</div>'; return; }
+    timer = setTimeout(() => doSearch(q), 350);
+  });
+}
+async function doSearch(q) {
+  const box = document.getElementById('searchResult');
+  if (!box) return;
+  box.innerHTML = '<div class="loading"><div class="spinner"></div>検索中...</div>';
+  try {
+    const r = await fetch(API + '/cards?name=' + encodeURIComponent(q));
+    const list = r.ok ? await r.json() : [];
+    searchResults = list.slice(0, 400);
+    window._cards = searchResults; window._curSet = null;
+    window._redrawSet = drawSearchCards; window._refreshInPlace = drawSearchCards;
+    drawSearchCards();
+  } catch (e) { box.innerHTML = '<div class="empty">検索に失敗しました。ネット接続を確認してください。</div>'; }
+}
+function drawSearchCards() {
+  const box = document.getElementById('searchResult');
+  if (!box) return;
+  if (!searchResults.length) { box.innerHTML = '<div class="empty">見つかりませんでした。</div>'; return; }
+  const own = searchResults.filter(c => displayOwned(c.id)).length;
+  box.innerHTML = `<div class="sub">${searchResults.length}件 ・ 所有 ${own} ・ タップで選択 → 保存で登録</div><div class="card-grid" id="searchGrid"></div>`;
+  const grid = document.getElementById('searchGrid');
+  grid.innerHTML = searchResults.map(cardCellHtml).join('');
+  wireCardCells(grid, drawSearchCards);
+}
+
+// ---- コレクション集計（F-04） ----
+async function goStats() {
+  renderedHash = 'stats'; location.hash = 'stats';
+  pending.clear(); updateSaveBar();
+  loading('集計中...');
+  try { renderStats(await getSets()); }
+  catch (e) { view.innerHTML = '<div class="empty">集計に失敗しました。</div>'; }
+}
+function renderStats(sets) {
+  const totalOwned = Object.keys(owned).length;
+  const perSet = sets.map(s => {
+    const total = (s.cardCount && s.cardCount.total) || 0;
+    const o = ownedCountForSet(s.id);
+    return { id: s.id, name: s.name, total, own: o, pct: total ? Math.round(o / total * 100) : 0 };
+  }).filter(r => r.own > 0).sort((a, b) => b.pct - a.pct || b.own - a.own);
+  const completed = perSet.filter(r => r.total > 0 && r.own >= r.total).length;
+  const rar = { AR: 0, SR: 0, SAR: 0, MUR: 0 };
+  for (const id in owned) { const rr = masterRarity[id]; if (rar[rr] !== undefined) rar[rr]++; }
+  const rarKnown = rar.AR + rar.SR + rar.SAR + rar.MUR;
+  const kpi = (label, val, color) => `<div class="kpi-card"><div class="kpi-phase">${label}</div><div style="font-size:24px;font-weight:800;color:${color||'var(--text)'}">${val}</div></div>`;
+  view.innerHTML = `
+    <h1 class="view-title">コレクション集計</h1>
+    <div class="sub">所有データ（クラウド同期中のあなたのコレクション）をもとに集計しています。</div>
+    <div class="kpi-grid" style="grid-template-columns:repeat(3,1fr)">
+      ${kpi('総所有枚数', totalOwned, 'var(--accent)')}
+      ${kpi('収集中セット', perSet.length)}
+      ${kpi('コンプ済セット', completed, 'var(--good)')}
+    </div>
+    ${rarKnown ? `<h3 style="font-size:14px;font-weight:700;color:var(--muted);margin:22px 0 10px">所有レア度（判明分 ${rarKnown}枚）</h3>
+      <div class="filter-row">${Object.entries(rar).filter(([, v]) => v).map(([k, v]) => `<span class="chip on" style="background:var(--gold);color:#3a2a00;border-color:var(--gold)">${k} ${v}</span>`).join('') || '<span class="chip">なし</span>'}</div>` : ''}
+    <h3 style="font-size:14px;font-weight:700;color:var(--muted);margin:22px 0 10px">セット別コンプ率（収集中のみ）</h3>
+    ${perSet.length ? `<div id="statList">${perSet.map(r => `
+      <div class="stat-row" onclick="goSet('${r.id}')">
+        <div class="stat-row-top"><span>${esc(r.name)} <span style="color:#64748b;font-size:11px">${r.id}</span></span><b>${r.own} / ${r.total}</b></div>
+        <div class="prog"><i style="width:${r.pct}%"></i></div>
+      </div>`).join('')}</div>` : '<div class="empty">まだ所有カードがありません。セットを開いて登録してみましょう。</div>'}`;
 }
 
 // ---- card detail modal ----
@@ -1213,11 +1316,18 @@ function toast(msg) {
   clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('on'), 1800);
 }
 
+// ---- 画面ルーティング ----
+function route(h) {
+  if (h === 'search') return goSearch();
+  if (h === 'stats') return goStats();
+  if (h) return goSet(h);
+  return goSets();
+}
 // ---- 戻る/進む（ブラウザ履歴）対応：hash変化で画面を復元 ----
 window.addEventListener('hashchange', () => {
   const h = location.hash.slice(1);
   if (h === renderedHash) return; // 自分で設定した変化は無視
-  if (h) goSet(h); else goSets();
+  route(h);
 });
 
 // ---- ログイン/新規登録画面 ----
@@ -1258,8 +1368,7 @@ function hideLoginScreen() { document.getElementById('loginScreen').classList.re
 // ---- boot ----
 refreshTotal();
 setCloudStatus();
-if (location.hash && location.hash.length > 1) goSet(location.hash.slice(1));
-else goSets();
+route(location.hash.slice(1));
 fetchMasterImages(); // 共有画像マスタを取得（未ログインでも表示に反映）
 fetchSetPatterns();  // セット画像パターンを取得
 fetchMasterRarity(); // 手動レア度を取得
