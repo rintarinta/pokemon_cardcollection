@@ -276,6 +276,10 @@ const STORE_KEY = 'pokecard_owned_v1';
 const RARITY_MAP = { AR:'Illustration rare', SR:'Ultra Rare', SAR:'Special illustration rare', MUR:'Mega Hyper Rare' };
 const RARITY_CODES = Object.keys(RARITY_MAP);
 
+// TCGdexの誤表記セット名を上書き（例: SV4aは実際はシャイニートレジャーex）
+const SET_NAME_OVERRIDE = { 'SV4a': 'シャイニートレジャーex' };
+function setName(s) { return (s && SET_NAME_OVERRIDE[s.id]) || (s && s.name) || ''; }
+
 // ===== クラウド保存（Supabase・ID/パスワード認証）。未設定（空）ならローカルのみで動作 =====
 const SUPABASE_URL = 'https://utilhmilvmrptzrjljdt.supabase.co';
 const SUPABASE_ANON = 'sb_publishable_1UA3-wEvmzBVIrp4DJqy0Q_TiC0Q451'; // publishable(anon相当)キー。RLSで本人の行のみアクセス可なので公開OK
@@ -661,9 +665,16 @@ async function goSets() {
   pending.clear(); updateSaveBar();
   loading('セット一覧を取得中...');
   try {
-    const sets = await getSets();
-    // CS系は実データ0枚の重複（幽霊）セット（同名が大量に並ぶ）ため一覧から除外
-    const list = sets.filter(s => !/^CS/.test(s.id)).reverse(); // 新しめを上に
+    const sets = (await getSets()).filter(s => !/^CS/.test(s.id)); // CS系=実データ0枚の幽霊
+    // 名前上書き後に同名が残るセットのうち、実データが空のもの（幽霊）を除外
+    const nameCount = {};
+    sets.forEach(s => { const n = setName(s); nameCount[n] = (nameCount[n] || 0) + 1; });
+    const dupNames = new Set(Object.keys(nameCount).filter(n => nameCount[n] > 1));
+    const emptyIds = new Set();
+    await Promise.all(sets.filter(s => dupNames.has(setName(s))).map(async s => {
+      try { const d = await getSet(s.id); if (!(d.cards && d.cards.length)) emptyIds.add(s.id); } catch {}
+    }));
+    const list = sets.filter(s => !emptyIds.has(s.id)).reverse(); // 新しめを上に
     renderSets(list);
   } catch (e) {
     view.innerHTML = `<div class="empty">セット一覧の取得に失敗しました。<br>ネット接続を確認して再読み込みしてください。<br><small>${e.message}</small></div>`;
@@ -687,7 +698,7 @@ function renderSets(list) {
       return `<div class="set-card" onclick="goSet('${s.id}')">
         <div class="set-logo">${logo}</div>
         <div>
-          <div class="set-name">${esc(s.name)}</div>
+          <div class="set-name">${esc(setName(s))}</div>
           <div class="set-id">${s.id}</div>
         </div>
         <div class="prog"><i style="width:${pct}%"></i></div>
@@ -698,7 +709,7 @@ function renderSets(list) {
   draw(list);
   document.getElementById('setSearch').addEventListener('input', e => {
     const q = e.target.value.trim().toLowerCase();
-    draw(list.filter(s => s.name.toLowerCase().includes(q) || s.id.toLowerCase().includes(q)));
+    draw(list.filter(s => setName(s).toLowerCase().includes(q) || s.id.toLowerCase().includes(q)));
   });
 }
 
@@ -732,8 +743,8 @@ function renderSet(set) {
   window._cards = cards; // openCard等から参照
   window._curSet = set;
   view.innerHTML = `
-    <div class="crumb"><a onclick="goSets()">セット一覧</a> ／ ${esc(set.name)}</div>
-    <h1 class="view-title">${esc(set.name)} <span style="font-size:13px;color:var(--muted)">(${set.id})</span>
+    <div class="crumb"><a onclick="goSets()">セット一覧</a> ／ ${esc(setName(set))}</div>
+    <h1 class="view-title">${esc(setName(set))} <span style="font-size:13px;color:var(--muted)">(${set.id})</span>
       <button class="btn" style="font-size:11px;padding:4px 10px;margin-left:6px" onclick="setPatternPrompt('${set.id}')">🖼 画像一括</button>
       <button class="btn" style="font-size:11px;padding:4px 10px" onclick="openAddCard('${set.id}')">＋ カード追加</button></h1>
     <div class="sub" id="setSub"></div>
