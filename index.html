@@ -132,6 +132,7 @@
   }
   .poke.owned .check { display: flex; }
   .poke.pending .check { background: var(--gold); color: #3a2a00; display: flex; }
+  .poke .check::after { content: ''; width: 5px; height: 9px; border: solid currentColor; border-width: 0 2.5px 2.5px 0; transform: rotate(45deg); margin-top: -2px; }
   .poke .flag { position: absolute; bottom: 26px; right: 5px; font-size: 9px; font-weight: 700; padding: 1px 6px; border-radius: 5px; display: none; }
   .poke.pending .flag { display: block; background: var(--gold); color: #3a2a00; }
   .poke.pending.rm .flag { background: #ef4444; color: #fff; }
@@ -203,8 +204,8 @@
 <body>
 <header>
   <div class="brand" onclick="goSets()"><span class="dot"></span>ポケカ コレクション</div>
-  <button class="btn" onclick="goSearch()">🔍 検索</button>
-  <button class="btn" onclick="goStats()">📊 集計</button>
+  <button class="btn" onclick="goSearch()">検索</button>
+  <button class="btn" onclick="goStats()">集計</button>
   <div class="grow"></div>
   <div class="stat">所有 <b id="totalOwned">0</b> 枚</div>
   <div class="stat" id="syncStatus" style="color:var(--good);cursor:pointer" onclick="openData()" title="アカウント・データ管理"></div>
@@ -240,7 +241,7 @@
     <h3 style="text-align:center;margin-bottom:4px">データ管理</h3>
     <p style="font-size:12px;color:var(--muted);text-align:center;margin-bottom:16px">定期的に書き出してバックアップしておくと安心です。</p>
     <div class="data-sec" id="cloudSec">
-      <div class="data-title">☁ クラウド同期</div>
+      <div class="data-title">クラウド同期</div>
       <div id="cloudBody"></div>
     </div>
     <div class="data-sec">
@@ -290,7 +291,7 @@ function cloudConfigured() { return !!(SUPABASE_URL && SUPABASE_ANON); }
 function loggedIn() { return cloudConfigured() && session && !!session.access_token; }
 function anonHeaders(extra) { return Object.assign({ apikey: SUPABASE_ANON, 'Content-Type': 'application/json' }, extra || {}); }
 function authHeaders(extra) { return Object.assign({ apikey: SUPABASE_ANON, Authorization: 'Bearer ' + session.access_token }, extra || {}); }
-function setCloudStatus(t) { const el = document.getElementById('syncStatus'); if (el) el.textContent = t || (loggedIn() ? '☁ ' + (session.email || 'ログイン中') : ''); }
+function setCloudStatus(t) { const el = document.getElementById('syncStatus'); if (el) el.textContent = t || (loggedIn() ? (session.email || 'ログイン中') : ''); }
 function nowISO() { try { return new Date().toISOString(); } catch { return ''; } }
 function persistSession() { try { localStorage.setItem(SESSION_KEY, JSON.stringify(session)); } catch {} }
 
@@ -340,8 +341,8 @@ function scheduleCloudSave() {
   clearTimeout(cloudTimer);
   setCloudStatus('保存中…');
   cloudTimer = setTimeout(async () => {
-    try { await cloudPush(); setCloudStatus('☁ 同期済み'); }
-    catch { setCloudStatus('⚠ 同期失敗（オフライン？）'); }
+    try { await cloudPush(); setCloudStatus('同期済み'); }
+    catch { setCloudStatus('同期失敗（オフライン？）'); }
   }, 800);
 }
 
@@ -633,19 +634,19 @@ function cardCellHtml(c) {
   let cls = dOwned ? 'owned' : 'unowned';
   if (isPend) cls += isRm ? ' pending rm' : ' pending';
   const src = cardThumb(c);
-  const noimgHtml = `<div class=\\'noimg\\'><small style=\\'color:#60a5fa\\'>ⓘで画像追加</small></div>`;
+  const noimgHtml = `<div class=\\'noimg\\'><small style=\\'color:#60a5fa\\'>画像を追加</small></div>`;
   const img = src
     ? `<img src="${src}" alt="${esc(c.name)}" loading="lazy" decoding="async" onerror="this.outerHTML='${noimgHtml}'">`
-    : `<div class="noimg"><small style="color:#60a5fa">ⓘで画像追加</small></div>`;
+    : `<div class="noimg"><small style="color:#60a5fa">画像を追加</small></div>`;
   const rar = dispRarity(c);
   return `<div class="poke ${cls}" data-id="${c.id}">
     ${img}
     <div class="num">${c.localId}</div>
     ${rar ? `<div class="rar-badge">${esc(rar)}</div>` : ''}
-    <div class="check">✓</div>
+    <div class="check"></div>
     <div class="flag">${isRm ? '削除予定' : '追加予定'}</div>
     <div class="nm">${esc(c.name)}</div>
-    <button class="info-btn" data-info="${c.id}" title="詳細・画像登録">ⓘ</button>
+    <button class="info-btn" data-info="${c.id}" title="詳細・画像登録">i</button>
   </div>`;
 }
 // カードセルの操作割当（redraw=タップ後の再描画関数）
@@ -745,7 +746,7 @@ function renderSet(set) {
   view.innerHTML = `
     <div class="crumb"><a onclick="goSets()">セット一覧</a> ／ ${esc(setName(set))}</div>
     <h1 class="view-title">${esc(setName(set))} <span style="font-size:13px;color:var(--muted)">(${set.id})</span>
-      <button class="btn" style="font-size:11px;padding:4px 10px;margin-left:6px" onclick="setPatternPrompt('${set.id}')">🖼 画像一括</button>
+      <button class="btn" style="font-size:11px;padding:4px 10px;margin-left:6px" onclick="setPatternPrompt('${set.id}')">画像一括</button>
       <button class="btn" style="font-size:11px;padding:4px 10px" onclick="openAddCard('${set.id}')">＋ カード追加</button></h1>
     <div class="sub" id="setSub"></div>
     <div class="filter-row">
@@ -761,7 +762,7 @@ function renderSet(set) {
       <span class="chip rar" data-r="SAR">SAR</span>
       <span class="chip rar" data-r="MUR">MUR</span>
     </div>
-    <div class="rar-note" id="rarNote">該当レア度のカードが見つかりません。TCGdex未整備の弾でも、各カードのⓘ →「レア度」で手動設定すればここで絞り込めます（全員に共有）。</div>
+    <div class="rar-note" id="rarNote">該当レア度のカードが見つかりません。TCGdex未整備の弾でも、各カードの「i」→「レア度」で手動設定すればここで絞り込めます（全員に共有）。</div>
     <div class="card-grid" id="cardGrid"></div>`;
 
   const grid = document.getElementById('cardGrid');
@@ -823,7 +824,7 @@ function renderSet(set) {
         if (curOwnedFilter === 'all') updateCardEl(el, id);
         else drawCards();
       });
-      // ⓘボタン＝詳細・画像登録を開く（選択トグルはしない）
+      // iボタン＝詳細・画像登録を開く（選択トグルはしない）
       const info = el.querySelector('.info-btn');
       if (info) {
         const open = e => { e.stopPropagation(); e.preventDefault(); openCard(id); };
@@ -989,7 +990,7 @@ async function openCard(id) {
       ${imgHtml}
       <h3>${esc(c.name)}</h3>
       <div class="meta">No.${c.localId} ・ レアリティ <span>${esc(masterRarity[id] || c.rarity || '不明')}</span><br>${esc((c.set&&c.set.name)||'')}</div>
-      <button class="btn primary" style="width:100%" id="mToggle">${willOwn?'✓ 選択中（タップで外す）':'選択に追加する'}</button>
+      <button class="btn primary" style="width:100%" id="mToggle">${willOwn?'選択中（タップで外す）':'選択に追加する'}</button>
       ${rarEditHtml}
       ${regHtml}
       ${isCustomCard ? `<button class="btn ghost" style="width:100%;margin-top:8px;color:#f87171" id="delCard">このカードを一覧から削除</button>` : ''}`;
@@ -1168,13 +1169,13 @@ async function authFlow(isSignup, emailArg, pwArg) {
     } else {
       await cloudPush(); // クラウド空 → 今の端末のデータをアップ
     }
-    setCloudStatus('☁ 同期済み');
+    setCloudStatus('同期済み');
     try { localStorage.removeItem('pokecard_localonly'); } catch {}
     fetchMasterImages(); // 共有画像マスタを最新化
     hideLoginScreen();
     closeData(); toast(isSignup ? '登録してログインしました' : 'ログインしました'); rerender();
   } catch (e) {
-    setCloudStatus('⚠ 失敗');
+    setCloudStatus('失敗');
     alert((isSignup ? '登録' : 'ログイン') + 'に失敗しました。\n' + e.message);
   }
 }
@@ -1196,10 +1197,10 @@ async function cloudInitialSync(manual) {
       owned = remote.data.owned || {}; customImg = remote.data.images || {};
       saveOwnedLocal(); saveImagesLocal(); rerender();
     }
-    setCloudStatus('☁ 同期済み');
+    setCloudStatus('同期済み');
     if (manual) { toast('クラウドから取得しました'); closeData(); }
   } catch (e) {
-    setCloudStatus('⚠ オフライン（ローカル表示）');
+    setCloudStatus('オフライン（ローカル表示）');
     if (manual) alert('取得に失敗しました。\n' + e.message);
   }
 }
