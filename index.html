@@ -278,7 +278,8 @@ const RARITY_MAP = { AR:'Illustration rare', SR:'Ultra Rare', SAR:'Special illus
 const RARITY_CODES = Object.keys(RARITY_MAP);
 
 // TCGdexの誤表記セット名を上書き（例: SV4aは実際はシャイニートレジャーex）
-const SET_NAME_OVERRIDE = { 'SV4a': 'シャイニートレジャーex' };
+// CP5にはXY11b「冷酷の反逆者」の名前が入っているが、実際は幻・伝説ドリームキラコレクション
+const SET_NAME_OVERRIDE = { 'SV4a': 'シャイニートレジャーex', 'CP5': '幻・伝説ドリームキラコレクション' };
 function setName(s) { return (s && SET_NAME_OVERRIDE[s.id]) || (s && s.name) || ''; }
 
 // ===== クラウド保存（Supabase・ID/パスワード認証）。未設定（空）ならローカルのみで動作 =====
@@ -380,9 +381,9 @@ function saveMasterCache() { try { localStorage.setItem(MASTER_KEY, JSON.stringi
 const setImgPattern = {}; // setId -> "https://.../s/{n}.png"
 function setIdOf(c) { const i = c.id.lastIndexOf('-'); return i > 0 ? c.id.slice(0, i) : ''; }
 function genUrl(c) { const t = setImgPattern[setIdOf(c)]; return t ? t.replace('{n}', pad3(c.localId)) : null; }
-// 表示優先: TCGdex画像 > 個別共有(card_images) > セットパターン > 個人ローカル
-function cardThumb(c) { return c.image ? c.image + '/low.webp' : (masterImg[c.id] || genUrl(c) || customImg[c.id] || null); }
-function cardFull(c)  { return c.image ? c.image + '/high.webp' : (masterImg[c.id] || genUrl(c) || customImg[c.id] || null); }
+// 表示優先: TCGdex画像 > 個別共有(card_images) > セットパターン > 個人ローカル > 同梱データ
+function cardThumb(c) { return c.image ? c.image + '/low.webp' : (masterImg[c.id] || genUrl(c) || customImg[c.id] || bundledImg[c.id] || null); }
+function cardFull(c)  { return c.image ? c.image + '/high.webp' : (masterImg[c.id] || genUrl(c) || customImg[c.id] || bundledImg[c.id] || null); }
 function anyCustomImg(id) { return masterImg[id] || customImg[id] || ''; }
 
 async function fetchSetPatterns() {
@@ -510,12 +511,12 @@ async function setRarity(id, rar) {
   else { await cloudDeleteRarity(id); delete masterRarity[id]; }
   saveRarityCache();
 }
-// 表示用レア度: 手動 > TCGdexバケット（フィルタ読込済みなら）
+// 表示用レア度: 手動 > TCGdexバケット（フィルタ読込済みなら） > 同梱データ
 function dispRarity(c) {
   if (masterRarity[c.id]) return masterRarity[c.id];
   const sid = setIdOf(c), idx = rarityIndex[sid];
   if (idx) for (const code of RARITY_CODES) if ((idx[code] || new Set()).has(c.id)) return code;
-  return '';
+  return bundledRarity[c.id] || '';
 }
 
 // ===== 手動カード名（共有マスタ card_names）。TCGdex/手動カードの名前を上書き・補完 =====
@@ -591,6 +592,42 @@ async function removeCustomCard(id, setId) {
   toast('カードを削除しました');
 }
 
+// ===== 同梱データ（data/sets/<セットID>.json）=====
+// TCGdexにカードが1枚も無いセットを、cardrush.media由来の一覧で補完する。
+// cardrushのAPIはCORSを許可していないのでブラウザからは直接叩けない。
+// tools/fetch_cardrush.py で事前生成したJSONを、開いたセットの分だけ遅延ロードする。
+const bundledBySet = {};  // setId -> [{id,localId,name,image:null,bundled:true}]
+const bundledImg = {};    // cardId -> 画像URL
+const bundledRarity = {}; // cardId -> レア度
+let bundledIndex = null;  // { setId: 枚数 }。取得失敗時は {}（file://で開いた場合など）
+async function loadBundledIndex() {
+  if (bundledIndex) return bundledIndex;
+  try {
+    const r = await fetch('data/index.json');
+    bundledIndex = r.ok ? await r.json() : {};
+  } catch { bundledIndex = {}; }
+  return bundledIndex;
+}
+async function loadBundledCards(setId) {
+  if (bundledBySet[setId]) return;
+  bundledBySet[setId] = [];
+  const idx = await loadBundledIndex();
+  if (!idx[setId]) return;
+  try {
+    const r = await fetch(`data/sets/${encodeURIComponent(setId)}.json`);
+    if (!r.ok) return;
+    const doc = await r.json();
+    const tpl = doc.img || '';
+    bundledBySet[setId] = (doc.cards || []).map(row => {
+      const num = row[0], name = row[1], rarity = row[2], imgId = row[3];
+      const id = `${setId}-${num}`;
+      if (imgId && tpl) bundledImg[id] = tpl.replace('{id}', imgId);
+      if (rarity) bundledRarity[id] = rarity;
+      return { id, localId: num, name: name || '', image: null, bundled: true };
+    });
+  } catch {}
+}
+
 // ---- pending（未保存の選択。保存済みと状態が異なるカードIDの集合） ----
 let pending = new Set();
 function displayOwned(id) { return pending.has(id) ? !owned[id] : !!owned[id]; }
@@ -636,7 +673,8 @@ async function getSets() {
 }
 async function getSet(id) {
   if (setDetailCache[id]) return setDetailCache[id];
-  const r = await fetch(API + '/sets/' + id);
+  // SM1+ のように「+」を含むセットIDがある。素で渡すとTCGdexが404を返すのでエンコードする
+  const r = await fetch(API + '/sets/' + encodeURIComponent(id));
   if (!r.ok) throw new Error('set ' + r.status);
   const d = await r.json();
   setDetailCache[id] = d;
@@ -702,6 +740,7 @@ async function goSets() {
   pending.clear(); updateSaveBar();
   loading('セット一覧を取得中...');
   try {
+    await loadBundledIndex(); // 同梱データの枚数を分母に反映するため先に読む
     const sets = (await getSets()).filter(s => !/^CS/.test(s.id)); // CS系=実データ0枚の幽霊
     // 名前上書き後に同名が残るセットのうち、実データが空のもの（幽霊）を除外
     const nameCount = {};
@@ -709,7 +748,8 @@ async function goSets() {
     const dupNames = new Set(Object.keys(nameCount).filter(n => nameCount[n] > 1));
     const emptyIds = new Set();
     await Promise.all(sets.filter(s => dupNames.has(setName(s))).map(async s => {
-      try { const d = await getSet(s.id); if (!(d.cards && d.cards.length)) emptyIds.add(s.id); } catch {}
+      // 同梱データを持つセットは中身があるので幽霊扱いしない
+      try { const d = await getSet(s.id); if (!(d.cards && d.cards.length) && !bundledIndex[s.id]) emptyIds.add(s.id); } catch {}
     }));
     const list = sets.filter(s => !emptyIds.has(s.id)).reverse(); // 新しめを上に
     renderSets(list);
@@ -728,7 +768,8 @@ function renderSets(list) {
   const draw = (arr) => {
     if (!arr.length) { grid.innerHTML = `<div class="empty">該当するセットがありません。</div>`; return; }
     grid.innerHTML = arr.map(s => {
-      const total = (s.cardCount && s.cardCount.total) || 0;
+      // 同梱データはTCGdexの公称枚数より多いことがある（SR等の後半番号を含むため）。多い方を分母にする
+      const total = Math.max((s.cardCount && s.cardCount.total) || 0, (bundledIndex && bundledIndex[s.id]) || 0);
       const own = ownedCountForSet(s.id);
       const pct = total ? Math.round(own/total*100) : 0;
       const logo = s.logo ? `<img src="${s.logo}.png" alt="" onerror="this.style.display='none'">` : `<span class="fallback">${s.id}</span>`;
@@ -760,7 +801,7 @@ async function goSet(id) {
   loading('カードを取得中...');
   try {
     const set = await getSet(id);
-    await loadCustomCards(id); // 手動登録カードを取得して合体
+    await Promise.all([loadCustomCards(id), loadBundledCards(id)]); // 手動登録カード・同梱データを合体
     curOwnedFilter = 'all';
     curRarities = new Set();
     renderSet(set);
@@ -771,11 +812,15 @@ async function goSet(id) {
 }
 
 function renderSet(set) {
-  // TCGdexのカード + 手動登録カード（共有マスタ）を合体し番号順に
+  // TCGdexのカード + 手動登録カード（共有マスタ）+ 同梱データ を合体し番号順に
+  // 優先度: TCGdex > 手動登録 > 同梱（同じ番号なら手で入れたものを残す）
   const tcg = set.cards || [];
   const extra = customCardsBySet[set.id] || [];
+  const bundled = bundledBySet[set.id] || [];
   const exIds = new Set(tcg.map(c => c.id));
+  const custIds = new Set(extra.map(c => c.id));
   const cards = tcg.concat(extra.filter(c => !exIds.has(c.id)))
+    .concat(bundled.filter(c => !exIds.has(c.id) && !custIds.has(c.id)))
     .sort((a, b) => String(a.localId).localeCompare(String(b.localId), undefined, { numeric: true }));
   window._cards = cards; // openCard等から参照
   window._curSet = set;

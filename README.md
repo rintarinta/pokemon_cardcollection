@@ -10,16 +10,45 @@
 
 ```
 pokecard-manager/
-├── index.html        アプリ本体（これ1ファイルで動く）
+├── index.html        アプリ本体（アプリのロジックはこれ1ファイル）
 ├── README.md         このファイル
+├── data/
+│   ├── index.json        補完データのあるセット一覧（セットID → 枚数）
+│   └── sets/<セットID>.json  TCGdexにカードが無いセットの補完データ（70セット・6,290枚）
+├── tools/
+│   └── fetch_cardrush.py 上記データの生成スクリプト
 └── docs/
     └── 要件定義書_ポケモンカード管理ツール.html   要件定義書（Ver.0.2）
 ```
+
+## カードデータの補完（data/）
+
+TCGdexは日本語の旧弾（SM期・剣盾S期・XY期など）でカードが1枚も登録されていないセットが多く、
+そのままでは図鑑ビューが空になる。そこで [cardrush.media](https://cardrush.media/) の公開APIから
+番号・カード名・レア度・画像を取得し、`data/sets/<セットID>.json` として同梱している。
+アプリは開いたセットの分だけ遅延ロードし、TCGdexのカードに継ぎ足して表示する。
+
+- 対象は「TCGdexにカードが0枚のセット」のみ。TCGdexにデータがあるセットは一切上書きしない
+- 同じ番号にTCGdex・手動登録・同梱データが揃った場合の優先度は **TCGdex > 手動登録 > 同梱**
+- 画像は `files.cardrush.media` への直リンク。先方のURL構成が変わると画像だけ表示されなくなる
+- cardrushのAPIはCORSを許可していないため、ブラウザから直接は叩けない（事前生成が必要）
+
+再生成・セット追加:
+
+```bash
+python tools/fetch_cardrush.py            # 補完できる/できないセットを一覧表示
+python tools/fetch_cardrush.py SM8b       # 指定セットだけ生成
+python tools/fetch_cardrush.py --all      # TCGdexが空のセットを全部生成
+```
+
+cardrushにも無いため補完できないセットが23件ある（XY期の大半、ADV期、L期）。
 
 ## 使い方
 
 ### すぐ試す（ローカル）
 `index.html` をブラウザにドラッグ＆ドロップ、またはダブルクリックで開く。
+ただし `file://` で開くと `data/` の補完データを読めない（fetchがブロックされる）ため、
+旧弾のカードを確認したい場合は簡易サーバー経由で開く: `python -m http.server` → http://localhost:8000/
 
 ### 人に配布して実運用する（推奨：URL公開）
 無料の静的ホスティングに `index.html` を置き、URLを渡すだけ。相手はリンクを開くだけで使える（スマホ可）。
