@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ポケカ コレクション管理</title>
+<title>ポケかんり</title>
 <link rel="preconnect" href="https://assets.tcgdex.net" crossorigin>
 <link rel="dns-prefetch" href="https://assets.tcgdex.net">
 <style>
@@ -203,7 +203,7 @@
 </head>
 <body>
 <header>
-  <div class="brand" onclick="goSets()"><span class="dot"></span>ポケカ コレクション</div>
+  <div class="brand" onclick="goSets()"><span class="dot"></span>ポケかんり</div>
   <button class="btn" onclick="goSearch()">検索</button>
   <button class="btn" onclick="goStats()">集計</button>
   <div class="grow"></div>
@@ -1409,7 +1409,7 @@ function renderLoginScreen() {
   const card = document.getElementById('loginCard');
   if (loginMode === 'signup') {
     card.innerHTML = `
-      <div class="logo"><span class="dot"></span>ポケカ コレクション</div>
+      <div class="logo"><span class="dot"></span>ポケかんり</div>
       <div class="lead"><b style="font-size:15px;color:var(--text)">新規登録</b><br>IDとパスワードを決めてください。<br>以降どの端末からでもこのID・パスワードでログインできます。</div>
       <input id="suEmail" placeholder="ID（例: rinta@poke.jp）" autocomplete="username" autocapitalize="none">
       <input id="suPw" type="password" placeholder="パスワード（6文字以上）" autocomplete="new-password">
@@ -1419,7 +1419,7 @@ function renderLoginScreen() {
     document.getElementById('toLogin').onclick = () => { loginMode = 'login'; renderLoginScreen(); };
   } else {
     card.innerHTML = `
-      <div class="logo"><span class="dot"></span>ポケカ コレクション</div>
+      <div class="logo"><span class="dot"></span>ポケかんり</div>
       <div class="lead">ID・パスワードでログインすると、データがクラウドに保存され<br><b>PC・スマホで同じコレクション</b>を使えます。</div>
       <input id="loginEmail" placeholder="ID（例: rinta@poke.jp）" autocomplete="username" autocapitalize="none">
       <input id="loginPw" type="password" placeholder="パスワード" autocomplete="current-password">
