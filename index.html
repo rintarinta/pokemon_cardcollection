@@ -274,7 +274,7 @@
 const API = 'https://api.tcgdex.net/v2/ja';
 const STORE_KEY = 'pokecard_owned_v1';
 // 日本語レア度コード → TCGdexのrarity文字列（実データで検証済み。メガ弾で有効、SV旧弾は未整備）
-const RARITY_MAP = { AR:'Illustration rare', SR:'Ultra Rare', SAR:'Special illustration rare', MUR:'Mega Hyper Rare', CHR:'Character Rare' };
+const RARITY_MAP = { AR:'Illustration rare', SR:'Ultra Rare', SAR:'Special illustration rare', UR:'Hyper rare', MUR:'Mega Hyper Rare', CHR:'Character Rare' };
 const RARITY_CODES = Object.keys(RARITY_MAP);
 
 // TCGdexの誤表記セット名を上書き（例: SV4aは実際はシャイニートレジャーex）
@@ -594,6 +594,7 @@ async function removeCustomCard(id, setId) {
 
 // ===== 同梱データ（data/sets/<セットID>.json）=====
 // TCGdexにカードが1枚も無いセットを、cardrush.media由来の一覧で補完する。
+// カードはあるがレア度が未整備のセット（例: SV7 ステラミラクル）にも、レア度バッジ・フィルタ用として使う。
 // cardrushのAPIはCORSを許可していないのでブラウザからは直接叩けない。
 // tools/fetch_cardrush.py で事前生成したJSONを、開いたセットの分だけ遅延ロードする。
 const bundledBySet = {};  // setId -> [{id,localId,name,image:null,bundled:true}]
@@ -692,6 +693,8 @@ async function ensureRarity(setId) {
   }));
   // TCGdexの "Illustration rare"(AR) は "Special illustration rare"(SAR) も部分一致で拾うため、SARをARから除外
   if (idx.AR && idx.SAR) idx.SAR.forEach(id => idx.AR.delete(id));
+  // 同様に "Hyper rare"(UR) は "Mega Hyper Rare"(MUR) も拾うため、MURをURから除外
+  if (idx.UR && idx.MUR) idx.MUR.forEach(id => idx.UR.delete(id));
   rarityIndex[setId] = idx;
   return idx;
 }
@@ -841,6 +844,7 @@ function renderSet(set) {
       <span class="chip rar" data-r="AR">AR</span>
       <span class="chip rar" data-r="SR">SR</span>
       <span class="chip rar" data-r="SAR">SAR</span>
+      <span class="chip rar" data-r="UR">UR</span>
       <span class="chip rar" data-r="MUR">MUR</span>
       <span class="chip rar" data-r="CHR">CHR</span>
     </div>
@@ -871,7 +875,7 @@ function renderSet(set) {
       grid.innerHTML = `<div class="empty">このセットのカードデータが TCGdex にありません。<br><small>${esc(setName(set))}（${set.id}）</small><br><br>上の「＋ カード追加」から手動で登録できます。<br>${tot ? `「1〜${tot}番を空生成」で番号だけ一括作成もできます（あとで名前・画像を追加可）。` : ''}<br>登録は全員に共有され、TCGdexにデータが入れば自動で切り替わります。</div>`;
       return;
     }
-    // レア度フィルタ適用対象IDの算出（TCGdexバケット＋手動レア度）
+    // レア度フィルタ適用対象IDの算出（TCGdexバケット＋手動レア度＋同梱レア度）
     let rarPass = null; // null = フィルタ無し
     if (curRarities.size) {
       rarPass = new Set();
@@ -879,6 +883,7 @@ function renderSet(set) {
       curRarities.forEach(code => {
         (idx[code] || new Set()).forEach(id => rarPass.add(id));
         for (const cid in masterRarity) if (masterRarity[cid] === code) rarPass.add(cid); // 手動レア度
+        for (const cid in bundledRarity) if (bundledRarity[cid] === code && !masterRarity[cid]) rarPass.add(cid); // 同梱レア度（手動が優先）
       });
       document.getElementById('rarNote').classList.toggle('on', rarPass.size === 0);
     } else {
@@ -1004,9 +1009,9 @@ function renderStats(sets) {
     return { id: s.id, name: s.name, total, own: o, pct: total ? Math.round(o / total * 100) : 0 };
   }).filter(r => r.own > 0).sort((a, b) => b.pct - a.pct || b.own - a.own);
   const completed = perSet.filter(r => r.total > 0 && r.own >= r.total).length;
-  const rar = { AR: 0, SR: 0, SAR: 0, MUR: 0 };
+  const rar = { AR: 0, SR: 0, SAR: 0, UR: 0, MUR: 0, CHR: 0 };
   for (const id in owned) { const rr = masterRarity[id]; if (rar[rr] !== undefined) rar[rr]++; }
-  const rarKnown = rar.AR + rar.SR + rar.SAR + rar.MUR;
+  const rarKnown = Object.values(rar).reduce((a, b) => a + b, 0);
   const kpi = (label, val, color) => `<div class="kpi-card"><div class="kpi-phase">${label}</div><div style="font-size:24px;font-weight:800;color:${color||'var(--text)'}">${val}</div></div>`;
   view.innerHTML = `
     <h1 class="view-title">コレクション集計</h1>
@@ -1074,7 +1079,7 @@ async function openCard(id) {
       <div class="imgreg">
         <div class="imgreg-title">レア度（手動・全員に共有）</div>
         <div id="rarEdit" style="display:flex;gap:6px;flex-wrap:wrap">
-          ${['AR','SR','SAR','MUR','CHR'].map(code => `<span class="chip rar-set ${masterRarity[id] === code ? 'on' : ''}" data-r="${code}">${code}</span>`).join('')}
+          ${['AR','SR','SAR','UR','MUR','CHR'].map(code => `<span class="chip rar-set ${masterRarity[id] === code ? 'on' : ''}" data-r="${code}">${code}</span>`).join('')}
           <span class="chip rar-set" data-r="">クリア</span>
         </div>
       </div>`;
