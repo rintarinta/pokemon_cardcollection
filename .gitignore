@@ -1,2 +1,5 @@
 # cardrushから取得したAPIレスポンスのキャッシュ（tools/fetch_cardrush.py が再生成する）
 data/.cache/
+
+# Pythonのバイトコードキャッシュ
+__pycache__/
