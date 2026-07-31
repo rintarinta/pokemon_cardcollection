@@ -15,9 +15,11 @@ pokecard-manager/
 ├── data/
 │   ├── index.json        補完データのあるセット一覧（セットID → 枚数）
 │   ├── rarities.json     レア度インデックス（セットID → レア度 → 番号一覧）。セット一覧のレア度フィルタと集計が参照
-│   └── sets/<セットID>.json  TCGdexにカードが無いセットの補完データ（71セット・6,425枚）
+│   ├── extra_sets.json   TCGdexのセット一覧に未登場の発売直後セット。アプリが一覧に追加表示する
+│   └── sets/<セットID>.json  TCGdexにカードが無いセットの補完データ（72セット・6,538枚）
 ├── tools/
-│   └── fetch_cardrush.py 上記データの生成スクリプト
+│   ├── fetch_cardrush.py 上記データの生成スクリプト（cardrush.media由来）
+│   └── fetch_official.py 発売直後セットの生成スクリプト（公式サイト＋pokecahack＋Bulbapedia由来）
 └── docs/
     └── 要件定義書_ポケモンカード管理ツール.html   要件定義書（Ver.0.2）
 ```
@@ -45,6 +47,19 @@ python tools/fetch_cardrush.py --rarities # data/rarities.json だけ再生成
 
 `rarities.json` は同梱データのレア度と、TCGdexにあるレア度（メガ弾・SV11B等）を統合した事前集計。
 セット生成時に自動更新されるが、TCGdex側にレア度が追記されたときは `--rarities` で単独更新できる。
+
+### 発売直後の新弾（TCGdexにもcardrushにも無いセット）
+
+TCGdexのセット一覧に未登場の新弾は、公式カード検索（名前・レア度）＋pokecahack（画像・シークレット枠）＋
+Bulbapedia（シークレットの同名対応）から生成し、`data/extra_sets.json` に登録して一覧に追加表示する。
+
+```bash
+# 例: M6 ストームエメラルダ（955は公式カード検索の商品絞り込みID）
+python tools/fetch_official.py M6 955 m6 ストームエメラルダ "https://bulbapedia.bulbagarden.net/wiki/Storm_Emeralda_(TCG)"
+```
+
+TCGdexにセットが入ったらアプリは自動でそちらを優先する。`extra_sets.json` から該当行を消せば一覧の重複も防げる
+（消し忘れてもTCGdex側にあるセットは追加表示しない）。
 
 cardrushにも無いため補完できないセットが23件ある（XY期の大半、ADV期、L期）。
 

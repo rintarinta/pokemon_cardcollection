@@ -591,6 +591,18 @@ function setRarityStats(sid, codes) {
   return { total, own };
 }
 
+// ===== 追加セット（data/extra_sets.json）=====
+// TCGdexのセット一覧にまだ存在しない発売直後のセット（tools/fetch_official.py が生成）。
+// セット一覧・詳細・集計に同梱データだけで表示する。TCGdexに入ったらそちらを優先。
+let extraSetsPromise = null;
+function loadExtraSets() {
+  if (!extraSetsPromise) {
+    extraSetsPromise = fetch('data/extra_sets.json').then(r => r.ok ? r.json() : []).catch(() => []);
+  }
+  return extraSetsPromise;
+}
+function pseudoSet(x) { return { id: x.id, name: x.name, cardCount: { total: x.total } }; }
+
 // ===== 手動カード登録（TCGdexに無いカードを共有マスタで補完。custom_cardsテーブル） =====
 const customCardsBySet = {}; // setId -> [{id,localId,name,image:null,custom:true}]
 function pad3(n) { const s = String(n).replace(/[^0-9]/g, ''); return s ? s.padStart(3, '0') : String(n); }
@@ -779,7 +791,8 @@ async function goSets() {
   pending.clear(); updateSaveBar();
   loading('セット一覧を取得中...');
   try {
-    await Promise.all([loadBundledIndex(), loadRarityMap()]); // 同梱枚数（分母）とレア度フィルタ用インデックスを先に読む
+    // 同梱枚数（分母）・レア度フィルタ用インデックス・追加セットを先に読む
+    const [, , extra] = await Promise.all([loadBundledIndex(), loadRarityMap(), loadExtraSets()]);
     const sets = (await getSets()).filter(s => !/^CS/.test(s.id)); // CS系=実データ0枚の幽霊
     // 名前上書き後に同名が残るセットのうち、実データが空のもの（幽霊）を除外
     const nameCount = {};
@@ -791,6 +804,9 @@ async function goSets() {
       try { const d = await getSet(s.id); if (!(d.cards && d.cards.length) && !bundledIndex[s.id]) emptyIds.add(s.id); } catch {}
     }));
     const list = sets.filter(s => !emptyIds.has(s.id)).reverse(); // 新しめを上に
+    // TCGdex未登場の新セット（extra_sets）を先頭に追加
+    const known = new Set(sets.map(s => s.id));
+    extra.filter(x => !known.has(x.id)).forEach(x => list.unshift(pseudoSet(x)));
     renderSets(list);
   } catch (e) {
     view.innerHTML = `<div class="empty">セット一覧の取得に失敗しました。<br>ネット接続を確認して再読み込みしてください。<br><small>${e.message}</small></div>`;
@@ -870,7 +886,14 @@ async function goSet(id) {
   pending.clear(); updateSaveBar();
   loading('カードを取得中...');
   try {
-    const set = await getSet(id);
+    let set;
+    try { set = await getSet(id); }
+    catch (e) {
+      // TCGdex未登場のセット（extra_sets）は同梱データだけで表示する
+      const extra = (await loadExtraSets()).find(x => x.id === id);
+      if (!extra) throw e;
+      set = pseudoSet(extra);
+    }
     await Promise.all([loadCustomCards(id), loadBundledCards(id)]); // 手動登録カード・同梱データを合体
     curOwnedFilter = 'all';
     curRarities = new Set();
@@ -1065,7 +1088,11 @@ async function goStats() {
   renderedHash = 'stats'; location.hash = 'stats';
   pending.clear(); updateSaveBar();
   loading('集計中...');
-  try { const [sets] = await Promise.all([getSets(), loadRarityMap()]); renderStats(sets); }
+  try {
+    const [sets, , extra] = await Promise.all([getSets(), loadRarityMap(), loadExtraSets()]);
+    const known = new Set(sets.map(s => s.id));
+    renderStats(sets.concat(extra.filter(x => !known.has(x.id)).map(pseudoSet)));
+  }
   catch (e) { view.innerHTML = '<div class="empty">集計に失敗しました。</div>'; }
 }
 function renderStats(sets) {
@@ -1108,9 +1135,13 @@ async function openCard(id) {
     const isCustomCard = localCard && localCard.custom;
     let c;
     if (isCustomCard) {
-      c = { name: localCard.name, localId: localCard.localId, rarity: '手動登録', image: null, set: { name: (window._curSet && window._curSet.name) || '' } };
+      c = { id, name: localCard.name, localId: localCard.localId, rarity: '手動登録', image: null, set: { name: (window._curSet && window._curSet.name) || '' } };
+    } else if (localCard && localCard.bundled) {
+      // 同梱データのカードはTCGdexに存在しない（404）ので手元の情報で表示する
+      c = { id, name: localCard.name, localId: localCard.localId, rarity: dispRarity(localCard) || '不明', image: null, set: { name: window._curSet ? setName(window._curSet) : '' } };
     } else {
       const r = await fetch(API + '/cards/' + id);
+      if (!r.ok) throw new Error('card ' + r.status);
       c = await r.json();
     }
     const willOwn = displayOwned(id);
