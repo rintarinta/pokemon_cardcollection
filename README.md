@@ -14,7 +14,8 @@ pokecard-manager/
 ├── README.md         このファイル
 ├── data/
 │   ├── index.json        補完データのあるセット一覧（セットID → 枚数）
-│   └── sets/<セットID>.json  TCGdexにカードが無いセットの補完データ（70セット・6,290枚）
+│   ├── rarities.json     レア度インデックス（セットID → レア度 → 番号一覧）。セット一覧のレア度フィルタと集計が参照
+│   └── sets/<セットID>.json  TCGdexにカードが無いセットの補完データ（71セット・6,425枚）
 ├── tools/
 │   └── fetch_cardrush.py 上記データの生成スクリプト
 └── docs/
@@ -28,7 +29,7 @@ TCGdexは日本語の旧弾（SM期・剣盾S期・XY期など）でカードが
 番号・カード名・レア度・画像を取得し、`data/sets/<セットID>.json` として同梱している。
 アプリは開いたセットの分だけ遅延ロードし、TCGdexのカードに継ぎ足して表示する。
 
-- 対象は「TCGdexにカードが0枚のセット」のみ。TCGdexにデータがあるセットは一切上書きしない
+- 対象は基本「TCGdexにカードが0枚のセット」。例外的に、カードはあるがレア度が未整備のセット（SV7 ステラミラクル等）もレア度補完用に同梱している。TCGdexにデータがあるカードは一切上書きしない
 - 同じ番号にTCGdex・手動登録・同梱データが揃った場合の優先度は **TCGdex > 手動登録 > 同梱**
 - 画像は `files.cardrush.media` への直リンク。先方のURL構成が変わると画像だけ表示されなくなる
 - cardrushのAPIはCORSを許可していないため、ブラウザから直接は叩けない（事前生成が必要）
@@ -39,7 +40,11 @@ TCGdexは日本語の旧弾（SM期・剣盾S期・XY期など）でカードが
 python tools/fetch_cardrush.py            # 補完できる/できないセットを一覧表示
 python tools/fetch_cardrush.py SM8b       # 指定セットだけ生成
 python tools/fetch_cardrush.py --all      # TCGdexが空のセットを全部生成
+python tools/fetch_cardrush.py --rarities # data/rarities.json だけ再生成
 ```
+
+`rarities.json` は同梱データのレア度と、TCGdexにあるレア度（メガ弾・SV11B等）を統合した事前集計。
+セット生成時に自動更新されるが、TCGdex側にレア度が追記されたときは `--rarities` で単独更新できる。
 
 cardrushにも無いため補完できないセットが23件ある（XY期の大半、ADV期、L期）。
 

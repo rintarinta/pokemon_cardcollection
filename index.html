@@ -511,12 +511,12 @@ async function setRarity(id, rar) {
   else { await cloudDeleteRarity(id); delete masterRarity[id]; }
   saveRarityCache();
 }
-// 表示用レア度: 手動 > TCGdexバケット（フィルタ読込済みなら） > 同梱データ
+// 表示用レア度: 手動 > TCGdexバケット（フィルタ読込済みなら） > 同梱データ > 事前集計インデックス
 function dispRarity(c) {
   if (masterRarity[c.id]) return masterRarity[c.id];
   const sid = setIdOf(c), idx = rarityIndex[sid];
   if (idx) for (const code of RARITY_CODES) if ((idx[code] || new Set()).has(c.id)) return code;
-  return bundledRarity[c.id] || '';
+  return bundledRarity[c.id] || (raritySets && raritySets[sid] && raritySets[sid][c.id]) || '';
 }
 
 // ===== 手動カード名（共有マスタ card_names）。TCGdex/手動カードの名前を上書き・補完 =====
@@ -553,6 +553,42 @@ async function setCardName(id, name) {
   if (name) { await cloudPushName(id, name); masterName[id] = name; }
   else { await cloudDeleteName(id); delete masterName[id]; }
   saveNameCache();
+}
+
+// ===== レア度インデックス（data/rarities.json）=====
+// 同梱データ＋TCGdexのレア度を tools/fetch_cardrush.py --rarities で事前集計したもの。
+// セット一覧のレア度フィルタと集計ビューが参照する（手動レア度 card_rarities が優先）。
+let raritySets = null; // { setId: { cardId: code } }
+let rarityMapPromise = null;
+function loadRarityMap() {
+  if (!rarityMapPromise) {
+    rarityMapPromise = fetch('data/rarities.json')
+      .then(r => r.ok ? r.json() : {})
+      .catch(() => ({}))
+      .then(doc => {
+        raritySets = {};
+        for (const sid in doc) {
+          const m = raritySets[sid] = {};
+          for (const code in doc[sid]) doc[sid][code].forEach(num => { m[`${sid}-${num}`] = code; });
+        }
+        return raritySets;
+      });
+  }
+  return rarityMapPromise;
+}
+// カードの実効レア度（手動 > 事前集計）
+function effRarity(cid) {
+  if (masterRarity[cid]) return masterRarity[cid];
+  const sid = cid.slice(0, cid.lastIndexOf('-'));
+  return (raritySets && raritySets[sid] && raritySets[sid][cid]) || '';
+}
+// セット内の選択レア度の枚数と所有数
+function setRarityStats(sid, codes) {
+  const eff = Object.assign({}, raritySets && raritySets[sid]);
+  for (const cid in masterRarity) if (cid.startsWith(sid + '-')) eff[cid] = masterRarity[cid];
+  let total = 0, own = 0;
+  for (const cid in eff) if (codes.has(eff[cid])) { total++; if (owned[cid]) own++; }
+  return { total, own };
 }
 
 // ===== 手動カード登録（TCGdexに無いカードを共有マスタで補完。custom_cardsテーブル） =====
@@ -743,7 +779,7 @@ async function goSets() {
   pending.clear(); updateSaveBar();
   loading('セット一覧を取得中...');
   try {
-    await loadBundledIndex(); // 同梱データの枚数を分母に反映するため先に読む
+    await Promise.all([loadBundledIndex(), loadRarityMap()]); // 同梱枚数（分母）とレア度フィルタ用インデックスを先に読む
     const sets = (await getSets()).filter(s => !/^CS/.test(s.id)); // CS系=実データ0枚の幽霊
     // 名前上書き後に同名が残るセットのうち、実データが空のもの（幽霊）を除外
     const nameCount = {};
@@ -761,37 +797,68 @@ async function goSets() {
   }
 }
 
+let curSetRarities = new Set(); // セット一覧のレア度フィルタ（画面遷移しても保持）
 function renderSets(list) {
   view.innerHTML = `
     <h1 class="view-title">セット一覧</h1>
     <div class="sub">カードのセット（拡張パック等）を選ぶと、図鑑ビューで所有を登録できます。</div>
     <div class="toolbar"><input class="search" id="setSearch" placeholder="セット名で絞り込み..."></div>
+    <div class="filter-row">
+      <span class="filter-label">レア度</span>
+      <span class="chip rar" data-r="AR">AR</span>
+      <span class="chip rar" data-r="SR">SR</span>
+      <span class="chip rar" data-r="SAR">SAR</span>
+      <span class="chip rar" data-r="UR">UR</span>
+      <span class="chip rar" data-r="MUR">MUR</span>
+      <span class="chip rar" data-r="CHR">CHR</span>
+    </div>
+    <div class="rar-note" id="setRarNote">選んだレア度があるセットだけを表示し、コンプ率もそのレア度だけで計算しています。レア度データが未整備のセットは表示されません。</div>
     <div class="set-grid" id="setGrid"></div>`;
   const grid = document.getElementById('setGrid');
   const draw = (arr) => {
-    if (!arr.length) { grid.innerHTML = `<div class="empty">該当するセットがありません。</div>`; return; }
-    grid.innerHTML = arr.map(s => {
-      // 同梱データはTCGdexの公称枚数より多いことがある（SR等の後半番号を含むため）。多い方を分母にする
-      const total = Math.max((s.cardCount && s.cardCount.total) || 0, (bundledIndex && bundledIndex[s.id]) || 0);
-      const own = ownedCountForSet(s.id);
+    const useRar = curSetRarities.size > 0;
+    document.getElementById('setRarNote').classList.toggle('on', useRar);
+    const rarLabel = [...curSetRarities].join('・');
+    const rows = [];
+    for (const s of arr) {
+      let total, own;
+      if (useRar) {
+        const st = setRarityStats(s.id, curSetRarities);
+        if (!st.total) continue; // 該当レア度なし（またはデータ未整備）は非表示
+        total = st.total; own = st.own;
+      } else {
+        // 同梱データはTCGdexの公称枚数より多いことがある（SR等の後半番号を含むため）。多い方を分母にする
+        total = Math.max((s.cardCount && s.cardCount.total) || 0, (bundledIndex && bundledIndex[s.id]) || 0);
+        own = ownedCountForSet(s.id);
+      }
       const pct = total ? Math.round(own/total*100) : 0;
       const logo = s.logo ? `<img src="${s.logo}.png" alt="" onerror="this.style.display='none'">` : `<span class="fallback">${s.id}</span>`;
-      return `<div class="set-card" onclick="goSet('${s.id}')">
+      rows.push(`<div class="set-card" onclick="goSet('${s.id}')">
         <div class="set-logo">${logo}</div>
         <div>
           <div class="set-name">${esc(setName(s))}</div>
           <div class="set-id">${s.id}</div>
         </div>
         <div class="prog"><i style="width:${pct}%"></i></div>
-        <div class="prog-txt"><span>コンプ率 ${pct}%</span><b>${own} / ${total}</b></div>
-      </div>`;
-    }).join('');
+        <div class="prog-txt"><span>${useRar ? esc(rarLabel) + ' ' : ''}コンプ率 ${pct}%</span><b>${own} / ${total}</b></div>
+      </div>`);
+    }
+    grid.innerHTML = rows.length ? rows.join('')
+      : `<div class="empty">${useRar ? '選んだレア度のカードがあるセットが見つかりません。' : '該当するセットがありません。'}</div>`;
   };
-  draw(list);
-  document.getElementById('setSearch').addEventListener('input', e => {
-    const q = e.target.value.trim().toLowerCase();
-    draw(list.filter(s => setName(s).toLowerCase().includes(q) || s.id.toLowerCase().includes(q)));
+  const redraw = () => {
+    const q = document.getElementById('setSearch').value.trim().toLowerCase();
+    draw(q ? list.filter(s => setName(s).toLowerCase().includes(q) || s.id.toLowerCase().includes(q)) : list);
+  };
+  const drawRarChips = () => view.querySelectorAll('.chip.rar').forEach(c => c.classList.toggle('on', curSetRarities.has(c.dataset.r)));
+  view.querySelectorAll('.chip.rar').forEach(c => c.onclick = () => {
+    const r = c.dataset.r;
+    if (curSetRarities.has(r)) curSetRarities.delete(r); else curSetRarities.add(r);
+    drawRarChips(); redraw();
   });
+  drawRarChips();
+  redraw();
+  document.getElementById('setSearch').addEventListener('input', redraw);
 }
 
 let renderedHash = null; // 現在表示中のhash（戻る/進む検知用）
@@ -998,7 +1065,7 @@ async function goStats() {
   renderedHash = 'stats'; location.hash = 'stats';
   pending.clear(); updateSaveBar();
   loading('集計中...');
-  try { renderStats(await getSets()); }
+  try { const [sets] = await Promise.all([getSets(), loadRarityMap()]); renderStats(sets); }
   catch (e) { view.innerHTML = '<div class="empty">集計に失敗しました。</div>'; }
 }
 function renderStats(sets) {
@@ -1010,7 +1077,7 @@ function renderStats(sets) {
   }).filter(r => r.own > 0).sort((a, b) => b.pct - a.pct || b.own - a.own);
   const completed = perSet.filter(r => r.total > 0 && r.own >= r.total).length;
   const rar = { AR: 0, SR: 0, SAR: 0, UR: 0, MUR: 0, CHR: 0 };
-  for (const id in owned) { const rr = masterRarity[id]; if (rar[rr] !== undefined) rar[rr]++; }
+  for (const id in owned) { const rr = effRarity(id); if (rar[rr] !== undefined) rar[rr]++; }
   const rarKnown = Object.values(rar).reduce((a, b) => a + b, 0);
   const kpi = (label, val, color) => `<div class="kpi-card"><div class="kpi-phase">${label}</div><div style="font-size:24px;font-weight:800;color:${color||'var(--text)'}">${val}</div></div>`;
   view.innerHTML = `
@@ -1496,6 +1563,7 @@ fetchMasterImages(); // 共有画像マスタを取得（未ログインでも�
 fetchSetPatterns();  // セット画像パターンを取得
 fetchMasterRarity(); // 手動レア度を取得
 fetchMasterName();   // 手動カード名を取得
+loadRarityMap();     // レア度インデックス（同梱＋TCGdex事前集計）を取得
 if (loggedIn()) {
   cloudInitialSync(); // ログイン済みなら起動時にクラウドから取得
 } else if (cloudConfigured() && localStorage.getItem('pokecard_localonly') !== '1') {

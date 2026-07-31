@@ -7,10 +7,15 @@ data/sets/<セットID>.json を生成する。
     python tools/fetch_cardrush.py            # 対象セットを一覧表示するだけ
     python tools/fetch_cardrush.py SM8b       # 指定セットだけ生成
     python tools/fetch_cardrush.py --all      # TCGdexが空のセットを全部生成
+    python tools/fetch_cardrush.py --rarities # data/rarities.json だけ再生成
 
 出力（1セット1ファイル。アプリが開いたセットの分だけ遅延ロードする）:
     {"set":"SM8b","cards":[[番号, 名前, レア度, 画像ID], ...]}
     画像URLは IMG_TEMPLATE の {id} を画像IDに差し替えて組み立てる。
+
+セット生成後は data/rarities.json（セットID→レア度→番号一覧）も更新する。
+同梱データのレア度とTCGdexのレア度（セット横断クエリ6回）の統合で、
+アプリのセット一覧レア度フィルタと集計が参照する。
 """
 import json, os, sys, time, urllib.request, urllib.parse
 from concurrent.futures import ThreadPoolExecutor
@@ -141,6 +146,40 @@ def write_set(doc):
     return p
 
 
+# アプリのレア度チップと同じコード。TCGdexのレア度文字列は index.html の RARITY_MAP と対応
+TCGDEX_RARITY = {'AR': 'Illustration rare', 'SR': 'Ultra Rare', 'SAR': 'Special illustration rare',
+                 'UR': 'Hyper rare', 'MUR': 'Mega Hyper Rare', 'CHR': 'Character Rare'}
+
+
+def build_rarities():
+    """data/rarities.json … {セットID: {レア度コード: [番号,...]}} を生成。"""
+    by_card = {}  # (set_id, 番号) -> コード
+    d = os.path.join(DATA, 'sets')
+    for fn in sorted(os.listdir(d)):
+        if not fn.endswith('.json'):
+            continue
+        doc = json.load(open(os.path.join(d, fn), encoding='utf-8'))
+        for num, _name, rarity, _img in doc['cards']:
+            if rarity in TCGDEX_RARITY:
+                by_card[(doc['set'], num)] = rarity
+    # TCGdex側を後勝ちで統合。レア度クエリは部分一致（AR⊃SAR, UR⊃MUR）なので狭い方を後に回す
+    for code in ['AR', 'SR', 'UR', 'CHR', 'SAR', 'MUR']:
+        url = TCGDEX + '/cards?rarity=' + urllib.parse.quote(TCGDEX_RARITY[code])
+        for c in get_json(url):
+            sid, _, num = c['id'].rpartition('-')
+            if sid:
+                by_card[(sid, num)] = code
+    out = {}
+    for (sid, num), code in sorted(by_card.items()):
+        out.setdefault(sid, {}).setdefault(code, []).append(num)
+    p = os.path.join(DATA, 'rarities.json')
+    with open(p, 'w', encoding='utf-8', newline='\n') as f:
+        json.dump(out, f, ensure_ascii=False, sort_keys=True, separators=(',', ':'))
+        f.write('\n')
+    total = sum(len(nums) for codes in out.values() for nums in codes.values())
+    print('data/rarities.json 更新: %dセット / %d枚' % (len(out), total))
+
+
 def write_index():
     """data/index.json … アプリはこれを見て「補完データがあるセットか」を判断する。"""
     d = os.path.join(DATA, 'sets')
@@ -157,6 +196,9 @@ def write_index():
 
 def main():
     args = [a for a in sys.argv[1:]]
+    if args and args[0] == '--rarities':
+        build_rarities()
+        return
     packs = cached('packs.json', load_packs)
     rarities = cached('rarities.json', load_rarities)
 
@@ -193,6 +235,7 @@ def main():
 
     idx = write_index()
     print('\ndata/index.json 更新: %d セット / %d枚' % (len(idx), sum(idx.values())))
+    build_rarities()
 
 
 if __name__ == '__main__':
