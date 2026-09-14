@@ -16,10 +16,11 @@ pokecard-manager/
 │   ├── index.json        補完データのあるセット一覧（セットID → 枚数）
 │   ├── rarities.json     レア度インデックス（セットID → レア度 → 番号一覧）。セット一覧のレア度フィルタと集計が参照
 │   ├── extra_sets.json   TCGdexのセット一覧に未登場の発売直後セット。アプリが一覧に追加表示する
-│   └── sets/<セットID>.json  TCGdexにカードが無いセットの補完データ（72セット・6,538枚）
+│   └── sets/<セットID>.json  カード／画像／レア度の補完データ（80セット・7,608枚）
 ├── tools/
 │   ├── fetch_cardrush.py 上記データの生成スクリプト（cardrush.media由来）
-│   └── fetch_official.py 発売直後セットの生成スクリプト（公式サイト＋pokecahack＋Bulbapedia由来）
+│   ├── fetch_official.py 発売直後セットの生成スクリプト（公式サイト＋pokecahack＋Bulbapedia由来）
+│   └── fetch_images.py   画像だけ欠けているセットの画像補完スクリプト（pokecahack由来）
 └── docs/
     └── 要件定義書_ポケモンカード管理ツール.html   要件定義書（Ver.0.2）
 ```
@@ -56,12 +57,40 @@ Bulbapedia（シークレットの同名対応）から生成し、`data/extra_s
 ```bash
 # 例: M6 ストームエメラルダ（955は公式カード検索の商品絞り込みID）
 python tools/fetch_official.py M6 955 m6 ストームエメラルダ "https://bulbapedia.bulbagarden.net/wiki/Storm_Emeralda_(TCG)"
+
+# 例: M6a 30th CELEBRATION（1つの弾が複数の商品に分かれている場合はpgをカンマ区切り）
+python tools/fetch_official.py M6a 961,962 m6a "30th CELEBRATION" "https://bulbapedia.bulbagarden.net/wiki/30th_Celebration_(TCG)"
 ```
+
+公式カード検索はC/U/Rにレア度アイコンを出さない弾があり（M6aはexのRRのみ）、通常枠のレア度は
+TCGdexにセットが入ってから `--rarities` で埋まる。発売前は未公開のカードが数枚あり、名前・画像が
+空で書き出される（M6aは6枚）。発売後にもう一度同じコマンドを流せば埋まる。
 
 TCGdexにセットが入ったらアプリは自動でそちらを優先する。`extra_sets.json` から該当行を消せば一覧の重複も防げる
 （消し忘れてもTCGdex側にあるセットは追加表示しない）。
 
 cardrushにも無いため補完できないセットが23件ある（XY期の大半、ADV期、L期）。
+
+### 画像だけが無いセット（メガ弾など）
+
+TCGdexにはカード・名前・レア度が入っているのに画像が1枚も無いセットがある（メガ弾のM1S〜M5、
+旧弾のneo期・PCG期・PMCG期、SV11B/SV11Wなど42セット）。これは pokecahack.com の
+収録リストから **画像だけ** を取って `data/sets/<セットID>.json` に入れる。
+
+```bash
+python tools/fetch_images.py          # 画像が無いセットと補完可否を一覧表示
+python tools/fetch_images.py M2a      # 指定セット（スラッグは既定でセットIDの小文字）
+python tools/fetch_images.py M2a m2a  # pokecahackのスラッグを明示指定
+python tools/fetch_images.py --all    # スクリプト内の SLUGS 対応表を全部生成
+```
+
+レア度列は空で書き出す（表示レア度はTCGdex由来の `rarities.json` が使われるため、
+ここで推測を混ぜると精度が落ちる）。名前はファイル単体で中身が読めるようにTCGdexから入れているが、
+アプリはTCGdexの名前を優先するので表示には影響しない。
+
+対応済み: **メガ弾7セット（M1S・M1L・M2・M2a・M3・M4・M5／905枚中904枚）**。
+未対応セットは `SLUGS` にpokecahackのスラッグを追記すれば同じ手順で足せる
+（M-P メガプロモ・MC スタートデッキ100は先方に収録リストが無く不可）。
 
 ## 使い方
 

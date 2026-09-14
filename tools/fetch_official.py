@@ -13,6 +13,8 @@
     python tools/fetch_official.py M6 955 m6 ストームエメラルダ
         引数: セットID / 公式検索の収録商品ID(pg) / pokecahackのスラッグ / セット名
         pgは https://www.pokemon-card.com/card-search/ の商品絞り込みのvalue。
+        1つの弾が複数の商品に分かれている場合はカンマ区切りで指定する
+        （例: M6a は「CL2027横浜 使用不可カード」961 と「使用可能カード」962 で 961,962）。
 
 生成物:
     data/sets/<セットID>.json（fetch_cardrush.pyと同じスキーマ＋name）
@@ -43,17 +45,19 @@ def get_text(url):
             time.sleep(2)
 
 
-def official_cards(pg):
-    """公式検索: cardID -> 和名。同名まとめのため通常枠のみ。"""
-    out, page = {}, 1
-    while True:
-        d = json.loads(get_text(f'{OFFICIAL}/card-search/resultAPI.php?keyword=&pg={pg}&page={page}'))
-        for c in d.get('cardList') or []:
-            out[c['cardID']] = c.get('cardNameAltText') or c.get('cardNameViewText') or ''
-        if page >= int(d.get('maxPage') or 1):
-            break
-        page += 1
-        time.sleep(0.3)
+def official_cards(pg_list):
+    """公式検索: cardID -> 和名。同名まとめのため通常枠のみ。pgはカンマ区切りで複数可。"""
+    out = {}
+    for pg in str(pg_list).split(','):
+        pg, page = pg.strip(), 1
+        while True:
+            d = json.loads(get_text(f'{OFFICIAL}/card-search/resultAPI.php?keyword=&pg={pg}&page={page}'))
+            for c in d.get('cardList') or []:
+                out[c['cardID']] = c.get('cardNameAltText') or c.get('cardNameViewText') or ''
+            if page >= int(d.get('maxPage') or 1):
+                break
+            page += 1
+            time.sleep(0.3)
     return out
 
 
@@ -68,7 +72,8 @@ def official_detail(card_id):
 # 公式レア度アイコン（ic_rare_<コード>_c.gif 等）-> 表示コード。見つかった分だけ随時追加
 ICON_RARITY = {'c_c': 'C', 'u_c': 'U', 'r_c': 'R', 'rr_c': 'RR', 'ace_c': 'ACE',
                'c': 'C', 'u': 'U', 'r': 'R', 'rr': 'RR', 'ace': 'ACE',
-               'ar': 'AR', 'sr': 'SR', 'sar': 'SAR', 'ur': 'UR', 'mur': 'MUR', 'chr': 'CHR'}
+               'ar': 'AR', 'sr': 'SR', 'sar': 'SAR', 'ur': 'UR', 'mur': 'MUR', 'chr': 'CHR',
+               'fur': 'FUR'}
 
 # 収録セット内に同名の通常枠が無いカード（他セット由来のSR再録等）の英名 -> 和名。
 # ツール実行後に「名前なし」と出た番号をBulbapediaで確認して随時追加する。
@@ -106,7 +111,7 @@ def pokecahack_secret_ranges(html, slug):
     cur, out = None, {}
     for _pos, kind, val in events:
         if kind == 'H':
-            m = re.match(r'(AR|SR|SAR|UR|MUR|CHR)（', val)
+            m = re.match(r'(AR|SR|SAR|UR|MUR|CHR|FUR)（', val)
             cur = m.group(1) if m else None
         elif cur:
             out[int(val)] = cur
@@ -114,14 +119,26 @@ def pokecahack_secret_ranges(html, slug):
 
 
 def parse_bulbapedia(html, denom):
+    """番号 -> 英名。カードページへのリンクのtitle（例 "Pikachu ex (30th Celebration 47)"）を使う。
+
+    セルの文字列から取ると ex・V などの接尾辞が画像（<img alt="ex">）なので落ちてしまい、
+    「ピカチュウ」と「ピカチュウex」が同名扱いになってレア度・名前の同名継承が誤爆する。
+    """
     out = {}
     for r in re.findall(r'<tr[^>]*>(.*?)</tr>', html, re.S):
         m = re.search(r'(\d{3})/%s' % denom, r)
         if not m:
             continue
-        cells = [re.sub(r'<[^>]+>', '', c).replace('&#160;', ' ').strip()
-                 for c in re.findall(r'<t[dh][^>]*>(.*?)</t[dh]>', r, re.S)]
-        name = next((c for c in cells[1:] if re.search(r'[A-Za-z]', c)), '')
+        name = ''
+        for t in re.findall(r'<a href="/wiki/[^"]+"[^>]*title="([^"]+)"', r):
+            mt = re.match(r'^(.+?) \(.+ \d+\)$', t.replace('&#160;', ' '))
+            if mt:
+                name = mt.group(1)
+                break
+        if not name:  # リンクが無い行（未作成ページ等）はセル文字列にフォールバック
+            cells = [re.sub(r'<[^>]+>', '', c).replace('&#160;', ' ').strip()
+                     for c in re.findall(r'<t[dh][^>]*>(.*?)</t[dh]>', r, re.S)]
+            name = next((c for c in cells[1:] if re.search(r'[A-Za-z]', c)), '')
         out[int(m.group(1))] = re.sub(r'\s+', ' ', name)
     return out
 
