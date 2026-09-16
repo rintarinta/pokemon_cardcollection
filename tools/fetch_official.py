@@ -8,10 +8,14 @@
     - シークレット枠の番号・レア度: pokecahack.com の収録リスト見出し（AR（…）12種 等）
     - シークレット枠の名前: Bulbapedia の英名リストで「同名の通常枠」に対応付けて和名を引き継ぐ
     - 画像: pokecahack.com の全カード画像
+    - 残った穴の穴埋め（任意）: tcgpro.co.jp の収録カードリスト表。
+      公式サイト未掲載のカードも番号・名前・レア度・画像を載せているので、
+      上の3ソースで埋まらなかったところ「だけ」を補う（既存の値は上書きしない）
 
 使い方:
     python tools/fetch_official.py M6 955 m6 ストームエメラルダ
         引数: セットID / 公式検索の収録商品ID(pg) / pokecahackのスラッグ / セット名
+             [/ BulbapediaのURL / tcgproのカードリストURL]
         pgは https://www.pokemon-card.com/card-search/ の商品絞り込みのvalue。
         1つの弾が複数の商品に分かれている場合はカンマ区切りで指定する
         （例: M6a は「CL2027横浜 使用不可カード」961 と「使用可能カード」962 で 961,962）。
@@ -24,7 +28,7 @@
 TCGdex/cardrushにセットが入ったら、data/extra_sets.json から該当行を消すだけでよい
 （アプリはTCGdex側を優先するため、同梱データは自動でフォールバックに回る）。
 """
-import json, os, re, sys, time, urllib.request
+import html, json, os, re, sys, time, urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from fetch_cardrush import write_index, build_rarities, DATA
@@ -53,7 +57,7 @@ def official_cards(pg_list):
         while True:
             d = json.loads(get_text(f'{OFFICIAL}/card-search/resultAPI.php?keyword=&pg={pg}&page={page}'))
             for c in d.get('cardList') or []:
-                out[c['cardID']] = c.get('cardNameAltText') or c.get('cardNameViewText') or ''
+                out[c['cardID']] = html.unescape(c.get('cardNameAltText') or c.get('cardNameViewText') or '')
             if page >= int(d.get('maxPage') or 1):
                 break
             page += 1
@@ -95,7 +99,7 @@ def pokecahack_images(html, slug):
     out = {}
     for m in pat.finditer(html):
         num = int(m.group(3))
-        out.setdefault(num, (m.group(1), m.group(2)))  # (フルURL, uploads以下)
+        out.setdefault(num, (m.group(1), 'pokecahack.com/wp-content/uploads/' + m.group(2)))  # (フルURL, ホスト付きパス)
     return out
 
 
@@ -130,8 +134,11 @@ def parse_bulbapedia(html, denom):
         if not m:
             continue
         name = ''
-        for t in re.findall(r'<a href="/wiki/[^"]+"[^>]*title="([^"]+)"', r):
-            mt = re.match(r'^(.+?) \(.+ \d+\)$', t.replace('&#160;', ' '))
+        # ページ未作成のカードは赤リンク（/w/index.php?title=…&redlink=1）になり、
+        # titleに " (page does not exist)" が付く。シークレット枠はまだ未作成のことが多い
+        for t in re.findall(r'<a href="/w(?:iki/|/index\.php)[^"]*"[^>]*title="([^"]+)"', r):
+            t = t.replace('&#160;', ' ').replace(' (page does not exist)', '')
+            mt = re.match(r'^(.+?) \(.+ \d+\)$', t)
             if mt:
                 name = mt.group(1)
                 break
@@ -143,12 +150,40 @@ def parse_bulbapedia(html, denom):
     return out
 
 
+# tcgproのレア度バッジは「再録」など非レア度の札も混ざるので、既知コードだけ採用する
+TCGPRO_RARITY = set(ICON_RARITY.values()) | {'FUR'}
+
+
+def parse_tcgpro(url):
+    """tcgproの収録カードリスト表: 番号 -> (名前, レア度, 画像パス)。
+
+    先頭の表だけを見る（2つ目以降は同梱プロモや番号帯の解説）。画像はホスト付きパスで返す。
+    """
+    h = get_text(url)
+    table = re.search(r'<table.*?</table>', h, re.S)
+    out = {}
+    for r in re.findall(r'<tr[^>]*>(.*?)</tr>', table.group(0) if table else '', re.S):
+        num = re.search(r'class="cl-col-no"[^>]*>\s*(\d{3})\s*<', r)
+        if not num:
+            continue
+        name = re.search(r'class="cl-name"[^>]*>(.*?)</span>', r, re.S)
+        rar = re.search(r'class="kk-rarity[^"]*"[^>]*>(.*?)</span>', r, re.S)
+        img = re.search(r'data-zoom-src="/([^"?]+)', r)
+        code = re.sub(r'<[^>]+>', '', rar.group(1)).strip() if rar else ''
+        out[int(num.group(1))] = (
+            html.unescape(re.sub(r'<[^>]+>', '', name.group(1))).strip() if name else '',
+            code if code in TCGPRO_RARITY else '',
+            'tcgpro.co.jp/' + img.group(1) if img else '')
+    return out
+
+
 def main():
     if len(sys.argv) < 5:
         print(__doc__)
         return
     set_id, pg, slug, set_name = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
     bulba_url = sys.argv[5] if len(sys.argv) > 5 else None
+    tcgpro_url = sys.argv[6] if len(sys.argv) > 6 else None
 
     print('公式検索から名前を取得中...')
     names_by_cardid = official_cards(pg)
@@ -202,13 +237,34 @@ def main():
                     rarity_by_num[n] = rarity_by_num[sib]
         print('  同名対応で名前 %d件を補完' % filled)
 
+    img_by_num = {n: v[1] for n, v in imgs.items()}
+    source = 'pokemon-card.com + pokecahack.com'
+    if tcgpro_url:
+        print('tcgproから残りの穴を補完中...')
+        pro = parse_tcgpro(tcgpro_url)
+        got = {'名前': 0, 'レア度': 0, '画像': 0}
+        for n, (pname, prar, pimg) in pro.items():
+            if n > total:
+                continue
+            if pname and not ja_by_num.get(n):
+                ja_by_num[n] = pname
+                got['名前'] += 1
+            if prar and not rarity_by_num.get(n):
+                rarity_by_num[n] = prar
+                got['レア度'] += 1
+            if pimg and not img_by_num.get(n):
+                img_by_num[n] = pimg
+                got['画像'] += 1
+        print('  %d枠を確認 ・ 補完: %s' % (len(pro), ' '.join('%s%d件' % kv for kv in got.items())))
+        if any(got.values()):
+            source += ' + tcgpro.co.jp'
+
     cards = []
     for n in range(1, total + 1):
         num = '%03d' % n
-        img_id = imgs.get(n, (None, ''))[1]
-        cards.append([num, ja_by_num.get(n, ''), rarity_by_num.get(n, ''), img_id])
-    doc = {'set': set_id, 'name': set_name, 'source': 'pokemon-card.com + pokecahack.com',
-           'img': 'https://pokecahack.com/wp-content/uploads/{id}', 'cards': cards}
+        cards.append([num, ja_by_num.get(n, ''), rarity_by_num.get(n, ''), img_by_num.get(n, '')])
+    doc = {'set': set_id, 'name': set_name, 'source': source,
+           'img': 'https://{id}', 'cards': cards}
     p = write_set_with_name(doc)
     noname = sum(1 for c in cards if not c[1])
     norar = sum(1 for c in cards if not c[2])

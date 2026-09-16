@@ -52,19 +52,31 @@ python tools/fetch_cardrush.py --rarities # data/rarities.json だけ再生成
 ### 発売直後の新弾（TCGdexにもcardrushにも無いセット）
 
 TCGdexのセット一覧に未登場の新弾は、公式カード検索（名前・レア度）＋pokecahack（画像・シークレット枠）＋
-Bulbapedia（シークレットの同名対応）から生成し、`data/extra_sets.json` に登録して一覧に追加表示する。
+Bulbapedia（シークレットの同名対応）＋tcgpro（残った穴の穴埋め・任意）から生成し、
+`data/extra_sets.json` に登録して一覧に追加表示する。
 
 ```bash
 # 例: M6 ストームエメラルダ（955は公式カード検索の商品絞り込みID）
 python tools/fetch_official.py M6 955 m6 ストームエメラルダ "https://bulbapedia.bulbagarden.net/wiki/Storm_Emeralda_(TCG)"
 
-# 例: M6a 30th CELEBRATION（1つの弾が複数の商品に分かれている場合はpgをカンマ区切り）
-python tools/fetch_official.py M6a 961,962 m6a "30th CELEBRATION" "https://bulbapedia.bulbagarden.net/wiki/30th_Celebration_(TCG)"
+# 例: M6a 30th CELEBRATION
+#   - 1つの弾が複数の商品に分かれている場合はpgをカンマ区切り
+#   - 第6引数にtcgproの収録カードリストURLを渡すと、他の3ソースで埋まらなかった穴だけを補う
+python tools/fetch_official.py M6a 961,962 m6a "30th CELEBRATION" \
+  "https://bulbapedia.bulbagarden.net/wiki/30th_Celebration_(TCG)" \
+  "https://tcgpro.co.jp/media/pokeka-30th-atari/30th-card-list/"
 ```
 
 公式カード検索はC/U/Rにレア度アイコンを出さない弾があり（M6aはexのRRのみ）、通常枠のレア度は
-TCGdexにセットが入ってから `--rarities` で埋まる。発売前は未公開のカードが数枚あり、名前・画像が
-空で書き出される（M6aは6枚）。発売後にもう一度同じコマンドを流せば埋まる。
+TCGdexにセットが入ってから `--rarities` で埋まる。ただしアプリのレア度フィルタが見るのは
+AR/SR/SAR/UR/MUR/CHRだけなので、C/U/Rが空でも実害は無い。
+
+tcgproは公式サイト未掲載のカードも番号・名前・レア度・画像を載せているので、
+公式の公開が追いついていない枠を埋められる（M6aでは名前1件・レア度6件・画像4件。
+AR 20枠とSAR 10枠がこれで揃った）。**既存の値は上書きせず、空のところだけ**を埋める。
+
+画像URLはホストが混ざるため、このスクリプトが書き出すJSONの `img` は `https://{id}` 固定で、
+各行にはホスト付きのパス（`pokecahack.com/...` / `tcgpro.co.jp/...`）を入れる。
 
 TCGdexにセットが入ったらアプリは自動でそちらを優先する。`extra_sets.json` から該当行を消せば一覧の重複も防げる
 （消し忘れてもTCGdex側にあるセットは追加表示しない）。
