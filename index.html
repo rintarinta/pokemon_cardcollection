@@ -284,12 +284,31 @@ function setName(s) { return (s && SET_NAME_OVERRIDE[s.id]) || (s && s.name) || 
 
 // ===== クラウド保存（Supabase・ID/パスワード認証）。未設定（空）ならローカルのみで動作 =====
 const SUPABASE_URL = 'https://utilhmilvmrptzrjljdt.supabase.co';
-const SUPABASE_ANON = 'sb_publishable_1UA3-wEvmzBVIrp4DJqy0Q_TiC0Q451'; // publishable(anon相当)キー。RLSで本人の行のみアクセス可なので公開OK
+const SUPABASE_ANON = 'sb_publishable_1UA3-wEvmzBVIrp4DJqy0Q_TiC0Q451'; // publishable(anon相当)キー。公開OK（collectionsは本人のみ・共有マスタは書込=管理者のみをRLSで強制。supabase/01_protect_shared_master.sql）
 const SESSION_KEY = 'pokecard_session';
 let session = null; try { session = JSON.parse(localStorage.getItem(SESSION_KEY)) || null; } catch {}
 let cloudTimer = null;
 function cloudConfigured() { return !!(SUPABASE_URL && SUPABASE_ANON); }
 function loggedIn() { return cloudConfigured() && session && !!session.access_token; }
+// 共有マスタの書き込みは管理者だけ（DB側RLSでも拒否。ここは表示の出し分け用）
+let isAdmin = false;
+function canEditMaster() { return loggedIn() && isAdmin; }
+async function checkAdmin(retry) {
+  if (!loggedIn()) { isAdmin = false; return; }
+  try {
+    const r = await fetch(`${SUPABASE_URL}/rest/v1/rpc/is_admin`, { method: 'POST', headers: authHeaders({ 'Content-Type': 'application/json' }), body: '{}' });
+    if (r.status === 401 && !retry) { await refreshSession(); return checkAdmin(true); }
+    const was = isAdmin;
+    isAdmin = r.ok && (await r.json()) === true;
+    if (was !== isAdmin) rerender();
+  } catch { isAdmin = false; }
+}
+// 画像URLは http(s) と data:image だけ通す（共有データ経由の javascript: や属性崩しを防ぐ）
+function safeImgUrl(u) {
+  if (typeof u !== 'string') return null;
+  u = u.trim();
+  return /^https?:\/\//i.test(u) || /^data:image\/(png|jpe?g|webp|gif);base64,[A-Za-z0-9+/=]+$/i.test(u) ? u : null;
+}
 function anonHeaders(extra) { return Object.assign({ apikey: SUPABASE_ANON, 'Content-Type': 'application/json' }, extra || {}); }
 function authHeaders(extra) { return Object.assign({ apikey: SUPABASE_ANON, Authorization: 'Bearer ' + session.access_token }, extra || {}); }
 function setCloudStatus(t) { const el = document.getElementById('syncStatus'); if (el) el.textContent = t || (loggedIn() ? (session.email || 'ログイン中') : ''); }
@@ -382,8 +401,8 @@ const setImgPattern = {}; // setId -> "https://.../s/{n}.png"
 function setIdOf(c) { const i = c.id.lastIndexOf('-'); return i > 0 ? c.id.slice(0, i) : ''; }
 function genUrl(c) { const t = setImgPattern[setIdOf(c)]; return t ? t.replace('{n}', pad3(c.localId)) : null; }
 // 表示優先: TCGdex画像 > 個別共有(card_images) > セットパターン > 個人ローカル > 同梱データ
-function cardThumb(c) { return c.image ? c.image + '/low.webp' : (masterImg[c.id] || genUrl(c) || customImg[c.id] || bundledImg[c.id] || null); }
-function cardFull(c)  { return c.image ? c.image + '/high.webp' : (masterImg[c.id] || genUrl(c) || customImg[c.id] || bundledImg[c.id] || null); }
+function cardThumb(c) { return safeImgUrl(c.image ? c.image + '/low.webp' : (masterImg[c.id] || genUrl(c) || customImg[c.id] || bundledImg[c.id] || null)); }
+function cardFull(c)  { return safeImgUrl(c.image ? c.image + '/high.webp' : (masterImg[c.id] || genUrl(c) || customImg[c.id] || bundledImg[c.id] || null)); }
 function anyCustomImg(id) { return masterImg[id] || customImg[id] || ''; }
 
 async function fetchSetPatterns() {
@@ -414,7 +433,7 @@ async function cloudDeleteSetPattern(setId, retry) {
   if (r.status === 401 && !retry) { await refreshSession(); return cloudDeleteSetPattern(setId, true); }
 }
 async function setPatternPrompt(setId) {
-  if (!loggedIn()) { alert('画像の一括設定はログインが必要です。'); return; }
+  if (!canEditMaster()) { alert('画像の一括設定は管理者のみです。'); return; }
   const cur = setImgPattern[setId];
   const sample = prompt(
     'このセットのカード画像URLを1枚貼ってください。\n番号部分（例: 001）を自動で差し替え、セット全カードに一括適用します。\n\n例: https://www.pokemon-card.com/ex/m1/assets/images/card/s/001.png\n\n' + (cur ? '（設定を解除するには「clear」と入力）\n現在: ' + cur : ''),
@@ -429,7 +448,7 @@ async function setPatternPrompt(setId) {
     if (setDetailCache[setId]) renderSet(setDetailCache[setId]);
     return;
   }
-  const t = deriveTemplate(s);
+  const t = safeImgUrl(s) && /^https?:/i.test(s) ? deriveTemplate(s) : null;
   if (!t || t.indexOf('{n}') < 0) { alert('番号を含む画像URLを貼ってください（例: .../001.png）。'); return; }
   try {
     await cloudPushSetPattern(setId, t);
@@ -464,17 +483,18 @@ async function cloudDeleteImage(id, retry) {
   if (r.status === 401 && !retry) { await refreshSession(); return cloudDeleteImage(id, true); }
 }
 async function registerImage(id, url) {
-  if (loggedIn()) {
+  if (!safeImgUrl(url)) throw new Error('http(s) の画像URLか画像ファイルを指定してください。');
+  if (canEditMaster()) {
     await cloudPushImage(id, url);        // 共有マスタへ（全員に反映）
     masterImg[id] = url; saveMasterCache();
     toast('画像を登録しました（全員に共有）');
   } else {
-    customImg[id] = url; saveImages();     // 未ログインはこの端末のみ
-    toast('画像を登録しました（この端末のみ・ログインで共有）');
+    customImg[id] = url; saveImages();     // 管理者以外は自分のデータにだけ保存
+    toast(loggedIn() ? '画像を登録しました（自分のデータのみ）' : '画像を登録しました（この端末のみ）');
   }
 }
 async function removeImage(id) {
-  if (loggedIn() && masterImg[id]) { try { await cloudDeleteImage(id); } catch {} delete masterImg[id]; saveMasterCache(); }
+  if (canEditMaster() && masterImg[id]) { try { await cloudDeleteImage(id); } catch {} delete masterImg[id]; saveMasterCache(); }
   if (customImg[id]) { delete customImg[id]; saveImages(); }
   toast('画像を削除しました');
 }
@@ -506,7 +526,7 @@ async function cloudDeleteRarity(id, retry) {
   if (r.status === 401 && !retry) { await refreshSession(); return cloudDeleteRarity(id, true); }
 }
 async function setRarity(id, rar) {
-  if (!loggedIn()) { alert('レア度の登録はログインが必要です。'); return; }
+  if (!canEditMaster()) { alert('レア度の登録は管理者のみです。'); return; }
   if (rar) { await cloudPushRarity(id, rar); masterRarity[id] = rar; }
   else { await cloudDeleteRarity(id); delete masterRarity[id]; }
   saveRarityCache();
@@ -548,7 +568,7 @@ async function cloudDeleteName(id, retry) {
   if (r.status === 401 && !retry) { await refreshSession(); return cloudDeleteName(id, true); }
 }
 async function setCardName(id, name) {
-  if (!loggedIn()) { alert('名前の登録はログインが必要です。'); return; }
+  if (!canEditMaster()) { alert('名前の登録は管理者のみです。'); return; }
   name = (name || '').trim();
   if (name) { await cloudPushName(id, name); masterName[id] = name; }
   else { await cloudDeleteName(id); delete masterName[id]; }
@@ -633,7 +653,7 @@ async function cloudDeleteCard(id, retry) {
   if (r.status === 401 && !retry) { await refreshSession(); return cloudDeleteCard(id, true); }
 }
 async function removeCustomCard(id, setId) {
-  if (!loggedIn()) { alert('カードの削除はログインが必要です。'); return; }
+  if (!canEditMaster()) { alert('カードの削除は管理者のみです。'); return; }
   try { await cloudDeleteCard(id); } catch (e) { alert('削除に失敗しました：' + e.message); return; }
   await loadCustomCards(setId);
   if (setDetailCache[setId]) renderSet(setDetailCache[setId]);
@@ -761,17 +781,17 @@ function cardCellHtml(c) {
   const src = cardThumb(c);
   const noimgHtml = `<div class=\\'noimg\\'><small style=\\'color:#60a5fa\\'>画像を追加</small></div>`;
   const img = src
-    ? `<img src="${src}" alt="${esc(c.name)}" loading="lazy" decoding="async" onerror="this.outerHTML='${noimgHtml}'">`
+    ? `<img src="${esc(src)}" alt="${esc(c.name)}" loading="lazy" decoding="async" onerror="this.outerHTML='${noimgHtml}'">`
     : `<div class="noimg"><small style="color:#60a5fa">画像を追加</small></div>`;
   const rar = dispRarity(c);
-  return `<div class="poke ${cls}" data-id="${c.id}">
+  return `<div class="poke ${cls}" data-id="${esc(c.id)}">
     ${img}
-    <div class="num">${c.localId}</div>
+    <div class="num">${esc(c.localId)}</div>
     ${rar ? `<div class="rar-badge">${esc(rar)}</div>` : ''}
     <div class="check"></div>
     <div class="flag">${isRm ? '削除予定' : '追加予定'}</div>
     <div class="nm">${esc(cardName(c))}</div>
-    <button class="info-btn" data-info="${c.id}" title="詳細・画像登録">i</button>
+    <button class="info-btn" data-info="${esc(c.id)}" title="詳細・画像登録">i</button>
   </div>`;
 }
 // カードセルの操作割当（redraw=タップ後の再描画関数）
@@ -920,8 +940,8 @@ function renderSet(set) {
   view.innerHTML = `
     <div class="crumb"><a onclick="goSets()">セット一覧</a> ／ ${esc(setName(set))}</div>
     <h1 class="view-title">${esc(setName(set))} <span style="font-size:13px;color:var(--muted)">(${set.id})</span>
-      <button class="btn" style="font-size:11px;padding:4px 10px;margin-left:6px" onclick="setPatternPrompt('${set.id}')">画像一括</button>
-      <button class="btn" style="font-size:11px;padding:4px 10px" onclick="openAddCard('${set.id}')">＋ カード追加</button></h1>
+      ${canEditMaster() ? `<button class="btn" style="font-size:11px;padding:4px 10px;margin-left:6px" onclick="setPatternPrompt('${set.id}')">画像一括</button>
+      <button class="btn" style="font-size:11px;padding:4px 10px" onclick="openAddCard('${set.id}')">＋ カード追加</button>` : ''}</h1>
     <div class="sub" id="setSub"></div>
     <div class="filter-row">
       <span class="filter-label">状態</span>
@@ -962,7 +982,7 @@ function renderSet(set) {
     if (!cards.length) {
       const tot = (set.cardCount && set.cardCount.total) || 0;
       document.getElementById('setSub').innerHTML = `カード ${tot} 枚（TCGdex未整備）`;
-      grid.innerHTML = `<div class="empty">このセットのカードデータが TCGdex にありません。<br><small>${esc(setName(set))}（${set.id}）</small><br><br>上の「＋ カード追加」から手動で登録できます。<br>${tot ? `「1〜${tot}番を空生成」で番号だけ一括作成もできます（あとで名前・画像を追加可）。` : ''}<br>登録は全員に共有され、TCGdexにデータが入れば自動で切り替わります。</div>`;
+      grid.innerHTML = `<div class="empty">このセットのカードデータが TCGdex にありません。<br><small>${esc(setName(set))}（${set.id}）</small><br><br>${canEditMaster() ? `上の「＋ カード追加」から手動で登録できます。<br>` : ''}${canEditMaster() && tot ? `「1〜${tot}番を空生成」で番号だけ一括作成もできます（あとで名前・画像を追加可）。` : ''}<br>登録は全員に共有され、TCGdexにデータが入れば自動で切り替わります。</div>`;
       return;
     }
     // レア度フィルタ適用対象IDの算出（TCGdexバケット＋手動レア度＋同梱レア度）
@@ -1149,12 +1169,12 @@ async function openCard(id) {
     const existing = anyCustomImg(id);
     const hasCustom = !c.image && !!existing;
     const imgHtml = full
-      ? `<img src="${full}" alt="" onerror="this.style.display='none'">`
+      ? `<img src="${esc(full)}" alt="" onerror="this.style.display='none'">`
       : `<div class="noimg" style="height:180px;border-radius:10px;margin-bottom:14px">画像なし</div>`;
     // TCGdexに画像が無いカードだけ、手動登録UIを出す
     const regHtml = c.image ? '' : `
       <div class="imgreg">
-        <div class="imgreg-title">画像を登録（全員で共有）${hasCustom?'・登録済み':''}</div>
+        <div class="imgreg-title">画像を登録${canEditMaster()?'（全員で共有）':'（自分用）'}${hasCustom?'・登録済み':''}</div>
         <input id="imgUrl" class="imgreg-input" placeholder="画像URLを貼り付け（公式サイトの画像URL等）" value="${hasCustom&&/^https?:/.test(existing)?esc(existing):''}">
         <div class="imgreg-btns">
           <button class="btn primary" id="imgSave">URLを登録</button>
@@ -1162,9 +1182,9 @@ async function openCard(id) {
           ${hasCustom?'<button class="btn" id="imgDel">削除</button>':''}
         </div>
         <input type="file" id="imgFile" accept="image/*" style="display:none">
-        <div class="imgreg-hint">${loggedIn()?'登録するとログイン利用者みんなに共有されます。':'ログインすると全員に共有できます（今はこの端末のみ保存）。'}公式カード画像のURL貼付けがおすすめ。</div>
+        <div class="imgreg-hint">${canEditMaster()?'登録するとログイン利用者みんなに共有されます。':(loggedIn()?'自分のデータにだけ保存されます。':'この端末にだけ保存されます。')}公式カード画像のURL貼付けがおすすめ。</div>
       </div>`;
-    const nameEditHtml = `
+    const nameEditHtml = !canEditMaster() ? '' : `
       <div class="imgreg">
         <div class="imgreg-title">カード名（手動・全員に共有）</div>
         <input id="nameInput" class="imgreg-input" placeholder="カード名を入力" value="${esc(masterName[id] || '')}">
@@ -1173,7 +1193,7 @@ async function openCard(id) {
           ${masterName[id] ? '<button class="btn" id="nameDel">クリア</button>' : ''}
         </div>
       </div>`;
-    const rarEditHtml = `
+    const rarEditHtml = !canEditMaster() ? '' : `
       <div class="imgreg">
         <div class="imgreg-title">レア度（手動・全員に共有）</div>
         <div id="rarEdit" style="display:flex;gap:6px;flex-wrap:wrap">
@@ -1184,12 +1204,12 @@ async function openCard(id) {
     body.innerHTML = `
       ${imgHtml}
       <h3>${esc(masterName[id] || c.name || ('No.' + c.localId))}</h3>
-      <div class="meta">No.${c.localId} ・ レアリティ <span>${esc(masterRarity[id] || c.rarity || '不明')}</span><br>${esc((c.set&&c.set.name)||'')}</div>
+      <div class="meta">No.${esc(c.localId)} ・ レアリティ <span>${esc(masterRarity[id] || c.rarity || '不明')}</span><br>${esc((c.set&&c.set.name)||'')}</div>
       <button class="btn primary" style="width:100%" id="mToggle">${willOwn?'選択中（タップで外す）':'選択に追加する'}</button>
       ${nameEditHtml}
       ${rarEditHtml}
       ${regHtml}
-      ${isCustomCard ? `<button class="btn ghost" style="width:100%;margin-top:8px;color:#f87171" id="delCard">このカードを一覧から削除</button>` : ''}`;
+      ${isCustomCard && canEditMaster() ? `<button class="btn ghost" style="width:100%;margin-top:8px;color:#f87171" id="delCard">このカードを一覧から削除</button>` : ''}`;
     const nameSaveBtn = document.getElementById('nameSave');
     if (nameSaveBtn) nameSaveBtn.onclick = async () => {
       try { await setCardName(id, document.getElementById('nameInput').value); if (window._redrawSet) window._redrawSet(); closeModal(); toast('名前を登録しました'); }
@@ -1247,7 +1267,7 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape') { closeModal
 // ---- カード追加モーダル（TCGdexに無いカードを共有マスタで補完） ----
 let curAddSet = null;
 function openAddCard(setId) {
-  if (!loggedIn()) { alert('カードの追加はログインが必要です（データ管理からログイン）。'); return; }
+  if (!canEditMaster()) { alert('カードの追加は管理者のみです。'); return; }
   curAddSet = setId;
   const total = (window._curSet && window._curSet.cardCount && window._curSet.cardCount.total) || 0;
   document.getElementById('addCardBody').innerHTML = `
@@ -1354,7 +1374,7 @@ async function authFlow(isSignup, emailArg, pwArg) {
   const email = (emailArg || '').trim();
   const pw = pwArg || '';
   if (!email || !pw) { alert('IDとパスワードを入力してください。'); return; }
-  if (pw.length < 6) { alert('パスワードは6文字以上にしてください。'); return; }
+  if (pw.length < (isSignup ? 8 : 6)) { alert('パスワードは' + (isSignup ? 8 : 6) + '文字以上にしてください。'); return; }
   setCloudStatus('接続中…');
   try {
     if (isSignup) {
@@ -1378,6 +1398,7 @@ async function authFlow(isSignup, emailArg, pwArg) {
     setCloudStatus('同期済み');
     try { localStorage.removeItem('pokecard_localonly'); } catch {}
     fetchMasterImages(); // 共有画像マスタを最新化
+    await checkAdmin();
     hideLoginScreen();
     closeData(); toast(isSignup ? '登録してログインしました' : 'ログインしました'); rerender();
   } catch (e) {
@@ -1386,7 +1407,7 @@ async function authFlow(isSignup, emailArg, pwArg) {
   }
 }
 function logout() {
-  session = null;
+  session = null; isAdmin = false;
   try { localStorage.removeItem(SESSION_KEY); localStorage.removeItem('pokecard_localonly'); } catch {}
   setCloudStatus('');
   renderCloudSec();
@@ -1560,7 +1581,7 @@ function renderLoginScreen() {
       <div class="logo"><span class="dot"></span>ポケかんり</div>
       <div class="lead"><b style="font-size:15px;color:var(--text)">新規登録</b><br>IDとパスワードを決めてください。<br>以降どの端末からでもこのID・パスワードでログインできます。</div>
       <input id="suEmail" placeholder="ID（例: rinta@poke.jp）" autocomplete="username" autocapitalize="none">
-      <input id="suPw" type="password" placeholder="パスワード（6文字以上）" autocomplete="new-password">
+      <input id="suPw" type="password" placeholder="パスワード（8文字以上）" autocomplete="new-password">
       <div class="row"><button class="btn primary" id="suBtn">登録する</button></div>
       <button class="skip" id="toLogin">← ログイン画面にもどる</button>`;
     document.getElementById('suBtn').onclick = () => authFlow(true, val('suEmail'), val('suPw'));
@@ -1597,6 +1618,7 @@ fetchMasterName();   // 手動カード名を取得
 loadRarityMap();     // レア度インデックス（同梱＋TCGdex事前集計）を取得
 if (loggedIn()) {
   cloudInitialSync(); // ログイン済みなら起動時にクラウドから取得
+  checkAdmin();       // 管理者なら共有マスタの編集UIを出す
 } else if (cloudConfigured() && localStorage.getItem('pokecard_localonly') !== '1') {
   showLoginScreen(); // 未ログイン かつ「ローカルのみ」未選択 → ログイン画面
 }
